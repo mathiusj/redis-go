@@ -24,7 +24,13 @@ type Value struct {
 // String returns a string representation of the value
 func (v Value) String() string {
 	switch v.Type {
-	case SimpleString, Error, BulkString:
+	case SimpleString, Error:
+		return v.Str
+	case BulkString:
+		// Handle null bulk string
+		if v.Str == "\x00NULL" {
+			return ""
+		}
 		return v.Str
 	case Integer:
 		return fmt.Sprintf("%d", v.Integer)

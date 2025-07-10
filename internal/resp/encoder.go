@@ -51,7 +51,8 @@ func (e *Encoder) encodeInteger(i int) error {
 }
 
 func (e *Encoder) encodeBulkString(s string) error {
-	if s == "" {
+	// Check for null bulk string (special marker)
+	if s == "\x00NULL" {
 		return e.write("$-1\r\n")
 	}
 	return e.write(fmt.Sprintf("$%d\r\n%s\r\n", len(s), s))
@@ -100,7 +101,8 @@ func ArrayValue(values ...Value) Value {
 
 // NullBulkString creates a null bulk string value
 func NullBulkString() Value {
-	return Value{Type: BulkString, Str: ""}
+	// Use a special marker to indicate null bulk string
+	return Value{Type: BulkString, Str: "\x00NULL"}
 }
 
 // OK returns a standard OK simple string
