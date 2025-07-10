@@ -22,43 +22,43 @@ type Registry struct {
 
 // NewRegistry creates a new command registry
 func NewRegistry() *Registry {
-	r := &Registry{
+	registry := &Registry{
 		handlers: make(map[string]Handler),
 		storage:  storage.New(),
 	}
 
 	// Register default handlers
-	r.Register("PING", r.handlePing)
-	r.Register("ECHO", r.handleEcho)
-	r.Register("SET", r.handleSet)
-	r.Register("GET", r.handleGet)
+	registry.Register("PING", registry.handlePing)
+	registry.Register("ECHO", registry.handleEcho)
+	registry.Register("SET", registry.handleSet)
+	registry.Register("GET", registry.handleGet)
 
-	return r
+	return registry
 }
 
 // Register adds a new command handler
-func (r *Registry) Register(command string, handler Handler) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.handlers[strings.ToUpper(command)] = handler
+func (registry *Registry) Register(command string, handler Handler) {
+	registry.mu.Lock()
+	defer registry.mu.Unlock()
+	registry.handlers[strings.ToUpper(command)] = handler
 }
 
 // Get retrieves a handler for a command
-func (r *Registry) Get(command string) (Handler, bool) {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	handler, ok := r.handlers[strings.ToUpper(command)]
+func (registry *Registry) Get(command string) (Handler, bool) {
+	registry.mu.RLock()
+	defer registry.mu.RUnlock()
+	handler, ok := registry.handlers[strings.ToUpper(command)]
 	return handler, ok
 }
 
 // HandleCommand processes a command and returns a response
-func (r *Registry) HandleCommand(cmd resp.Value) resp.Value {
+func (registry *Registry) HandleCommand(cmd resp.Value) resp.Value {
 	command, err := cmd.GetCommand()
 	if err != nil {
 		return resp.ErrorValue("ERR invalid command format")
 	}
 
-	handler, ok := r.Get(command)
+	handler, ok := registry.Get(command)
 	if !ok {
 		return resp.ErrorValue("ERR unknown command '" + command + "'")
 	}
@@ -69,7 +69,7 @@ func (r *Registry) HandleCommand(cmd resp.Value) resp.Value {
 
 // Command handlers
 
-func (r *Registry) handlePing(args []string) resp.Value {
+func (registry *Registry) handlePing(args []string) resp.Value {
 	if len(args) == 0 {
 		return resp.Pong()
 	}
@@ -77,7 +77,7 @@ func (r *Registry) handlePing(args []string) resp.Value {
 	return resp.SimpleStringValue(args[0])
 }
 
-func (r *Registry) handleEcho(args []string) resp.Value {
+func (registry *Registry) handleEcho(args []string) resp.Value {
 	if len(args) == 0 {
 		return resp.ErrorValue("ERR wrong number of arguments for 'echo' command")
 	}
@@ -85,7 +85,7 @@ func (r *Registry) handleEcho(args []string) resp.Value {
 	return resp.BulkStringValue(args[0])
 }
 
-func (r *Registry) handleSet(args []string) resp.Value {
+func (registry *Registry) handleSet(args []string) resp.Value {
 	if len(args) < 2 {
 		return resp.ErrorValue("ERR wrong number of arguments for 'set' command")
 	}
@@ -95,52 +95,52 @@ func (r *Registry) handleSet(args []string) resp.Value {
 	var expiration *time.Time
 
 	// Parse additional arguments for expiry
-	i := 2
-	for i < len(args) {
-		option := strings.ToUpper(args[i])
+	argIndex := 2
+	for argIndex < len(args) {
+		option := strings.ToUpper(args[argIndex])
 
 		switch option {
 		case "EX": // Expire in seconds
-			if i+1 >= len(args) {
+			if argIndex+1 >= len(args) {
 				return resp.ErrorValue("ERR syntax error")
 			}
-			seconds, err := strconv.Atoi(args[i+1])
+			seconds, err := strconv.Atoi(args[argIndex+1])
 			if err != nil || seconds <= 0 {
 				return resp.ErrorValue("ERR invalid expire time in set")
 			}
-			exp := time.Now().Add(time.Duration(seconds) * time.Second)
-			expiration = &exp
-			i += 2
+			expirationTime := time.Now().Add(time.Duration(seconds) * time.Second)
+			expiration = &expirationTime
+			argIndex += 2
 
 		case "PX": // Expire in milliseconds
-			if i+1 >= len(args) {
+			if argIndex+1 >= len(args) {
 				return resp.ErrorValue("ERR syntax error")
 			}
-			milliseconds, err := strconv.Atoi(args[i+1])
+			milliseconds, err := strconv.Atoi(args[argIndex+1])
 			if err != nil || milliseconds <= 0 {
 				return resp.ErrorValue("ERR invalid expire time in set")
 			}
-			exp := time.Now().Add(time.Duration(milliseconds) * time.Millisecond)
-			expiration = &exp
-			i += 2
+			expirationTime := time.Now().Add(time.Duration(milliseconds) * time.Millisecond)
+			expiration = &expirationTime
+			argIndex += 2
 
 		default:
 			return resp.ErrorValue("ERR syntax error")
 		}
 	}
 
-	r.storage.Set(key, value, expiration)
+	registry.storage.Set(key, value, expiration)
 
 	return resp.OK()
 }
 
-func (r *Registry) handleGet(args []string) resp.Value {
+func (registry *Registry) handleGet(args []string) resp.Value {
 	if len(args) != 1 {
 		return resp.ErrorValue("ERR wrong number of arguments for 'get' command")
 	}
 
 	key := args[0]
-	value, ok := r.storage.Get(key)
+	value, ok := registry.storage.Get(key)
 	if !ok {
 		// Return null bulk string for non-existent keys
 		return resp.NullBulkString()

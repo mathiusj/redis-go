@@ -14,37 +14,37 @@ type Parser struct {
 }
 
 // NewParser creates a new RESP parser
-func NewParser(r io.Reader) *Parser {
+func NewParser(reader io.Reader) *Parser {
 	return &Parser{
-		reader: bufio.NewReader(r),
+		reader: bufio.NewReader(reader),
 	}
 }
 
 // Parse reads and parses the next RESP value
-func (p *Parser) Parse() (Value, error) {
-	b, err := p.reader.ReadByte()
+func (parser *Parser) Parse() (Value, error) {
+	typeByte, err := parser.reader.ReadByte()
 	if err != nil {
 		return Value{}, err
 	}
 
-	switch Type(b) {
+	switch Type(typeByte) {
 	case SimpleString:
-		return p.parseSimpleString()
+		return parser.parseSimpleString()
 	case Error:
-		return p.parseError()
+		return parser.parseError()
 	case Integer:
-		return p.parseInteger()
+		return parser.parseInteger()
 	case BulkString:
-		return p.parseBulkString()
+		return parser.parseBulkString()
 	case Array:
-		return p.parseArray()
+		return parser.parseArray()
 	default:
-		return Value{}, fmt.Errorf("unknown RESP type: %c", b)
+		return Value{}, fmt.Errorf("unknown RESP type: %c", typeByte)
 	}
 }
 
-func (p *Parser) readLine() (string, error) {
-	line, err := p.reader.ReadString('\n')
+func (parser *Parser) readLine() (string, error) {
+	line, err := parser.reader.ReadString('\n')
 	if err != nil {
 		return "", err
 	}
@@ -52,38 +52,38 @@ func (p *Parser) readLine() (string, error) {
 	return strings.TrimSuffix(line, "\r\n"), nil
 }
 
-func (p *Parser) parseSimpleString() (Value, error) {
-	line, err := p.readLine()
+func (parser *Parser) parseSimpleString() (Value, error) {
+	line, err := parser.readLine()
 	if err != nil {
 		return Value{}, err
 	}
 	return Value{Type: SimpleString, Str: line}, nil
 }
 
-func (p *Parser) parseError() (Value, error) {
-	line, err := p.readLine()
+func (parser *Parser) parseError() (Value, error) {
+	line, err := parser.readLine()
 	if err != nil {
 		return Value{}, err
 	}
 	return Value{Type: Error, Str: line}, nil
 }
 
-func (p *Parser) parseInteger() (Value, error) {
-	line, err := p.readLine()
+func (parser *Parser) parseInteger() (Value, error) {
+	line, err := parser.readLine()
 	if err != nil {
 		return Value{}, err
 	}
 
-	i, err := strconv.Atoi(line)
+	intValue, err := strconv.Atoi(line)
 	if err != nil {
 		return Value{}, fmt.Errorf("invalid integer: %s", line)
 	}
 
-	return Value{Type: Integer, Integer: i}, nil
+	return Value{Type: Integer, Integer: intValue}, nil
 }
 
-func (p *Parser) parseBulkString() (Value, error) {
-	line, err := p.readLine()
+func (parser *Parser) parseBulkString() (Value, error) {
+	line, err := parser.readLine()
 	if err != nil {
 		return Value{}, err
 	}
@@ -104,7 +104,7 @@ func (p *Parser) parseBulkString() (Value, error) {
 
 	// Read the bulk string data
 	data := make([]byte, length+2) // +2 for \r\n
-	_, err = io.ReadFull(p.reader, data)
+	_, err = io.ReadFull(parser.reader, data)
 	if err != nil {
 		return Value{}, err
 	}
@@ -113,8 +113,8 @@ func (p *Parser) parseBulkString() (Value, error) {
 	return Value{Type: BulkString, Str: string(data[:length])}, nil
 }
 
-func (p *Parser) parseArray() (Value, error) {
-	line, err := p.readLine()
+func (parser *Parser) parseArray() (Value, error) {
+	line, err := parser.readLine()
 	if err != nil {
 		return Value{}, err
 	}
@@ -134,12 +134,12 @@ func (p *Parser) parseArray() (Value, error) {
 	}
 
 	array := make([]Value, count)
-	for i := 0; i < count; i++ {
-		value, err := p.Parse()
+	for index := 0; index < count; index++ {
+		value, err := parser.Parse()
 		if err != nil {
 			return Value{}, err
 		}
-		array[i] = value
+		array[index] = value
 	}
 
 	return Value{Type: Array, Array: array}, nil

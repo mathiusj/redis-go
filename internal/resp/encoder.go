@@ -11,60 +11,60 @@ type Encoder struct {
 }
 
 // NewEncoder creates a new RESP encoder
-func NewEncoder(w io.Writer) *Encoder {
-	return &Encoder{writer: w}
+func NewEncoder(writer io.Writer) *Encoder {
+	return &Encoder{writer: writer}
 }
 
 // Encode writes a RESP value to the writer
-func (e *Encoder) Encode(v Value) error {
-	switch v.Type {
+func (encoder *Encoder) Encode(value Value) error {
+	switch value.Type {
 	case SimpleString:
-		return e.encodeSimpleString(v.Str)
+		return encoder.encodeSimpleString(value.Str)
 	case Error:
-		return e.encodeError(v.Str)
+		return encoder.encodeError(value.Str)
 	case Integer:
-		return e.encodeInteger(v.Integer)
+		return encoder.encodeInteger(value.Integer)
 	case BulkString:
-		return e.encodeBulkString(v.Str)
+		return encoder.encodeBulkString(value.Str)
 	case Array:
-		return e.encodeArray(v.Array)
+		return encoder.encodeArray(value.Array)
 	default:
-		return fmt.Errorf("unknown RESP type: %c", v.Type)
+		return fmt.Errorf("unknown RESP type: %c", value.Type)
 	}
 }
 
-func (e *Encoder) write(data string) error {
-	_, err := e.writer.Write([]byte(data))
+func (encoder *Encoder) write(data string) error {
+	_, err := encoder.writer.Write([]byte(data))
 	return err
 }
 
-func (e *Encoder) encodeSimpleString(s string) error {
-	return e.write(fmt.Sprintf("+%s\r\n", s))
+func (encoder *Encoder) encodeSimpleString(str string) error {
+	return encoder.write(fmt.Sprintf("+%s\r\n", str))
 }
 
-func (e *Encoder) encodeError(s string) error {
-	return e.write(fmt.Sprintf("-%s\r\n", s))
+func (encoder *Encoder) encodeError(str string) error {
+	return encoder.write(fmt.Sprintf("-%s\r\n", str))
 }
 
-func (e *Encoder) encodeInteger(i int) error {
-	return e.write(fmt.Sprintf(":%d\r\n", i))
+func (encoder *Encoder) encodeInteger(intValue int) error {
+	return encoder.write(fmt.Sprintf(":%d\r\n", intValue))
 }
 
-func (e *Encoder) encodeBulkString(s string) error {
+func (encoder *Encoder) encodeBulkString(str string) error {
 	// Check for null bulk string (special marker)
-	if s == "\x00NULL" {
-		return e.write("$-1\r\n")
+	if str == "\x00NULL" {
+		return encoder.write("$-1\r\n")
 	}
-	return e.write(fmt.Sprintf("$%d\r\n%s\r\n", len(s), s))
+	return encoder.write(fmt.Sprintf("$%d\r\n%s\r\n", len(str), str))
 }
 
-func (e *Encoder) encodeArray(array []Value) error {
-	if err := e.write(fmt.Sprintf("*%d\r\n", len(array))); err != nil {
+func (encoder *Encoder) encodeArray(array []Value) error {
+	if err := encoder.write(fmt.Sprintf("*%d\r\n", len(array))); err != nil {
 		return err
 	}
 
-	for _, v := range array {
-		if err := e.Encode(v); err != nil {
+	for _, value := range array {
+		if err := encoder.Encode(value); err != nil {
 			return err
 		}
 	}
@@ -75,23 +75,23 @@ func (e *Encoder) encodeArray(array []Value) error {
 // Helper functions for common responses
 
 // SimpleString creates a simple string value
-func SimpleStringValue(s string) Value {
-	return Value{Type: SimpleString, Str: s}
+func SimpleStringValue(str string) Value {
+	return Value{Type: SimpleString, Str: str}
 }
 
 // Error creates an error value
-func ErrorValue(s string) Value {
-	return Value{Type: Error, Str: s}
+func ErrorValue(str string) Value {
+	return Value{Type: Error, Str: str}
 }
 
 // Integer creates an integer value
-func IntegerValue(i int) Value {
-	return Value{Type: Integer, Integer: i}
+func IntegerValue(intValue int) Value {
+	return Value{Type: Integer, Integer: intValue}
 }
 
 // BulkString creates a bulk string value
-func BulkStringValue(s string) Value {
-	return Value{Type: BulkString, Str: s}
+func BulkStringValue(str string) Value {
+	return Value{Type: BulkString, Str: str}
 }
 
 // Array creates an array value

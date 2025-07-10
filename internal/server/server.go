@@ -29,46 +29,46 @@ func New(addr string) *Server {
 }
 
 // Start begins listening for connections
-func (s *Server) Start() error {
-	l, err := net.Listen("tcp", s.addr)
+func (server *Server) Start() error {
+	listener, err := net.Listen("tcp", server.addr)
 	if err != nil {
-		return fmt.Errorf("failed to bind to %s: %w", s.addr, err)
+		return fmt.Errorf("failed to bind to %s: %w", server.addr, err)
 	}
 
-	s.listener = l
-	fmt.Printf("Redis server listening on %s\n", s.addr)
+	server.listener = listener
+	fmt.Printf("Redis server listening on %s\n", server.addr)
 
 	// Accept connections in a goroutine
-	go s.acceptConnections()
+	go server.acceptConnections()
 
 	return nil
 }
 
 // Stop gracefully shuts down the server
-func (s *Server) Stop() error {
-	close(s.shutdown)
+func (server *Server) Stop() error {
+	close(server.shutdown)
 
-	if s.listener != nil {
-		s.listener.Close()
+	if server.listener != nil {
+		server.listener.Close()
 	}
 
 	// Wait for all connections to finish
-	s.wg.Wait()
+	server.wg.Wait()
 
 	return nil
 }
 
 // Wait blocks until the server is shut down
-func (s *Server) Wait() {
-	<-s.shutdown
+func (server *Server) Wait() {
+	<-server.shutdown
 }
 
-func (s *Server) acceptConnections() {
+func (server *Server) acceptConnections() {
 	for {
-		conn, err := s.listener.Accept()
+		conn, err := server.listener.Accept()
 		if err != nil {
 			select {
-			case <-s.shutdown:
+			case <-server.shutdown:
 				return
 			default:
 				fmt.Printf("Error accepting connection: %v\n", err)
@@ -76,15 +76,15 @@ func (s *Server) acceptConnections() {
 			}
 		}
 
-		s.wg.Add(1)
-		go s.handleConnection(conn)
+		server.wg.Add(1)
+		go server.handleConnection(conn)
 	}
 }
 
-func (s *Server) handleConnection(conn net.Conn) {
+func (server *Server) handleConnection(conn net.Conn) {
 	defer func() {
 		conn.Close()
-		s.wg.Done()
+		server.wg.Done()
 	}()
 
 	parser := resp.NewParser(conn)
@@ -93,7 +93,7 @@ func (s *Server) handleConnection(conn net.Conn) {
 	for {
 		// Check for shutdown
 		select {
-		case <-s.shutdown:
+		case <-server.shutdown:
 			return
 		default:
 		}
@@ -111,7 +111,7 @@ func (s *Server) handleConnection(conn net.Conn) {
 		}
 
 		// Handle the command
-		response := s.registry.HandleCommand(value)
+		response := server.registry.HandleCommand(value)
 
 		// Send the response
 		if err := encoder.Encode(response); err != nil {
@@ -122,6 +122,6 @@ func (s *Server) handleConnection(conn net.Conn) {
 }
 
 // RegisterHandler adds a custom command handler
-func (s *Server) RegisterHandler(command string, handler handlers.Handler) {
-	s.registry.Register(command, handler)
+func (server *Server) RegisterHandler(command string, handler handlers.Handler) {
+	server.registry.Register(command, handler)
 }

@@ -22,37 +22,37 @@ type Value struct {
 }
 
 // String returns a string representation of the value
-func (v Value) String() string {
-	switch v.Type {
+func (value Value) String() string {
+	switch value.Type {
 	case SimpleString, Error:
-		return v.Str
+		return value.Str
 	case BulkString:
 		// Handle null bulk string
-		if v.Str == "\x00NULL" {
+		if value.Str == "\x00NULL" {
 			return ""
 		}
-		return v.Str
+		return value.Str
 	case Integer:
-		return fmt.Sprintf("%d", v.Integer)
+		return fmt.Sprintf("%d", value.Integer)
 	case Array:
-		return fmt.Sprintf("%v", v.Array)
+		return fmt.Sprintf("%v", value.Array)
 	default:
 		return ""
 	}
 }
 
 // IsError returns true if the value is an error
-func (v Value) IsError() bool {
-	return v.Type == Error
+func (value Value) IsError() bool {
+	return value.Type == Error
 }
 
 // GetCommand extracts the command name from an array value
-func (v Value) GetCommand() (string, error) {
-	if v.Type != Array || len(v.Array) == 0 {
+func (value Value) GetCommand() (string, error) {
+	if value.Type != Array || len(value.Array) == 0 {
 		return "", fmt.Errorf("invalid command format")
 	}
 
-	cmd := v.Array[0]
+	cmd := value.Array[0]
 	if cmd.Type != BulkString {
 		return "", fmt.Errorf("command must be a bulk string")
 	}
@@ -61,14 +61,14 @@ func (v Value) GetCommand() (string, error) {
 }
 
 // GetArgs returns the arguments from an array value (excluding the command)
-func (v Value) GetArgs() []string {
-	if v.Type != Array || len(v.Array) <= 1 {
+func (value Value) GetArgs() []string {
+	if value.Type != Array || len(value.Array) <= 1 {
 		return []string{}
 	}
 
-	args := make([]string, 0, len(v.Array)-1)
-	for i := 1; i < len(v.Array); i++ {
-		args = append(args, v.Array[i].String())
+	args := make([]string, 0, len(value.Array)-1)
+	for index := 1; index < len(value.Array); index++ {
+		args = append(args, value.Array[index].String())
 	}
 
 	return args

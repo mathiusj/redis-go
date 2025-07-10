@@ -25,22 +25,22 @@ func New() *Storage {
 }
 
 // Set stores a key-value pair
-func (s *Storage) Set(key, value string, expiration *time.Time) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+func (storage *Storage) Set(key, value string, expiration *time.Time) {
+	storage.mu.Lock()
+	defer storage.mu.Unlock()
 
-	s.data[key] = &Entry{
+	storage.data[key] = &Entry{
 		Value:      value,
 		Expiration: expiration,
 	}
 }
 
 // Get retrieves a value by key
-func (s *Storage) Get(key string) (string, bool) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+func (storage *Storage) Get(key string) (string, bool) {
+	storage.mu.Lock()
+	defer storage.mu.Unlock()
 
-	entry, ok := s.data[key]
+	entry, ok := storage.data[key]
 	if !ok {
 		return "", false
 	}
@@ -48,7 +48,7 @@ func (s *Storage) Get(key string) (string, bool) {
 	// Check if expired
 	if entry.Expiration != nil && time.Now().After(*entry.Expiration) {
 		// Remove expired entry
-		delete(s.data, key)
+		delete(storage.data, key)
 		return "", false
 	}
 
@@ -56,24 +56,24 @@ func (s *Storage) Get(key string) (string, bool) {
 }
 
 // Delete removes a key from storage
-func (s *Storage) Delete(key string) bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+func (storage *Storage) Delete(key string) bool {
+	storage.mu.Lock()
+	defer storage.mu.Unlock()
 
-	_, existed := s.data[key]
-	delete(s.data, key)
+	_, existed := storage.data[key]
+	delete(storage.data, key)
 	return existed
 }
 
 // Exists checks if a key exists and is not expired
-func (s *Storage) Exists(key string) bool {
-	_, ok := s.Get(key)
+func (storage *Storage) Exists(key string) bool {
+	_, ok := storage.Get(key)
 	return ok
 }
 
 // Size returns the number of keys in storage
-func (s *Storage) Size() int {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return len(s.data)
+func (storage *Storage) Size() int {
+	storage.mu.RLock()
+	defer storage.mu.RUnlock()
+	return len(storage.data)
 }
