@@ -1,8 +1,10 @@
 package handlers
 
 import (
+	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/codecrafters-redis-go/internal/resp"
 	"github.com/codecrafters-redis-go/internal/storage"
@@ -90,10 +92,44 @@ func (r *Registry) handleSet(args []string) resp.Value {
 
 	key := args[0]
 	value := args[1]
+	var expiration *time.Time
 
-	// For now, ignore any additional arguments (like EX, PX, etc.)
-	// We'll implement expiration in later stages
-	r.storage.Set(key, value, nil)
+	// Parse additional arguments for expiry
+	i := 2
+	for i < len(args) {
+		option := strings.ToUpper(args[i])
+
+		switch option {
+		case "EX": // Expire in seconds
+			if i+1 >= len(args) {
+				return resp.ErrorValue("ERR syntax error")
+			}
+			seconds, err := strconv.Atoi(args[i+1])
+			if err != nil || seconds <= 0 {
+				return resp.ErrorValue("ERR invalid expire time in set")
+			}
+			exp := time.Now().Add(time.Duration(seconds) * time.Second)
+			expiration = &exp
+			i += 2
+
+		case "PX": // Expire in milliseconds
+			if i+1 >= len(args) {
+				return resp.ErrorValue("ERR syntax error")
+			}
+			milliseconds, err := strconv.Atoi(args[i+1])
+			if err != nil || milliseconds <= 0 {
+				return resp.ErrorValue("ERR invalid expire time in set")
+			}
+			exp := time.Now().Add(time.Duration(milliseconds) * time.Millisecond)
+			expiration = &exp
+			i += 2
+
+		default:
+			return resp.ErrorValue("ERR syntax error")
+		}
+	}
+
+	r.storage.Set(key, value, expiration)
 
 	return resp.OK()
 }
