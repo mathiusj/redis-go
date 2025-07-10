@@ -37,8 +37,8 @@ func (s *Storage) Set(key, value string, expiration *time.Time) {
 
 // Get retrieves a value by key
 func (s *Storage) Get(key string) (string, bool) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
 
 	entry, ok := s.data[key]
 	if !ok {
@@ -48,11 +48,7 @@ func (s *Storage) Get(key string) (string, bool) {
 	// Check if expired
 	if entry.Expiration != nil && time.Now().After(*entry.Expiration) {
 		// Remove expired entry
-		s.mu.RUnlock()
-		s.mu.Lock()
 		delete(s.data, key)
-		s.mu.Unlock()
-		s.mu.RLock()
 		return "", false
 	}
 
