@@ -5,6 +5,7 @@ import (
 	"sync"
 
 	"github.com/codecrafters-redis-go/internal/resp"
+	"github.com/codecrafters-redis-go/internal/storage"
 )
 
 // Handler is a function that processes a Redis command
@@ -14,17 +15,21 @@ type Handler func(args []string) resp.Value
 type Registry struct {
 	mu       sync.RWMutex
 	handlers map[string]Handler
+	storage  *storage.Storage
 }
 
 // NewRegistry creates a new command registry
 func NewRegistry() *Registry {
 	r := &Registry{
 		handlers: make(map[string]Handler),
+		storage:  storage.New(),
 	}
 
 	// Register default handlers
-	r.Register("PING", handlePing)
-	r.Register("ECHO", handleEcho)
+	r.Register("PING", r.handlePing)
+	r.Register("ECHO", r.handleEcho)
+	r.Register("SET", r.handleSet)
+	r.Register("GET", r.handleGet)
 
 	return r
 }
@@ -62,7 +67,7 @@ func (r *Registry) HandleCommand(cmd resp.Value) resp.Value {
 
 // Command handlers
 
-func handlePing(args []string) resp.Value {
+func (r *Registry) handlePing(args []string) resp.Value {
 	if len(args) == 0 {
 		return resp.Pong()
 	}
@@ -70,10 +75,40 @@ func handlePing(args []string) resp.Value {
 	return resp.SimpleStringValue(args[0])
 }
 
-func handleEcho(args []string) resp.Value {
+func (r *Registry) handleEcho(args []string) resp.Value {
 	if len(args) == 0 {
 		return resp.ErrorValue("ERR wrong number of arguments for 'echo' command")
 	}
 	// ECHO returns the argument as a bulk string
 	return resp.BulkStringValue(args[0])
+}
+
+func (r *Registry) handleSet(args []string) resp.Value {
+	if len(args) < 2 {
+		return resp.ErrorValue("ERR wrong number of arguments for 'set' command")
+	}
+
+	key := args[0]
+	value := args[1]
+
+	// For now, ignore any additional arguments (like EX, PX, etc.)
+	// We'll implement expiration in later stages
+	r.storage.Set(key, value, nil)
+
+	return resp.OK()
+}
+
+func (r *Registry) handleGet(args []string) resp.Value {
+	if len(args) != 1 {
+		return resp.ErrorValue("ERR wrong number of arguments for 'get' command")
+	}
+
+	key := args[0]
+	value, ok := r.storage.Get(key)
+	if !ok {
+		// Return null bulk string for non-existent keys
+		return resp.NullBulkString()
+	}
+
+	return resp.BulkStringValue(value)
 }
