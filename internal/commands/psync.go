@@ -3,7 +3,6 @@ package commands
 import (
 	"fmt"
 
-	"github.com/codecrafters-redis-go/internal/errors"
 	"github.com/codecrafters-redis-go/internal/logger"
 	"github.com/codecrafters-redis-go/internal/resp"
 )
@@ -22,38 +21,22 @@ func (c *PsyncCommand) Name() string {
 }
 
 // Execute runs the PSYNC command
-func (c *PsyncCommand) Execute(args []string, context *Context) resp.Value {
+func (c *PsyncCommand) Execute(ctx Context, args []string) resp.Value {
 	if len(args) < 2 {
-		return resp.ErrorValue(errors.WrongNumberOfArguments("psync").Error())
+		return resp.ErrorValue("ERR wrong number of arguments for 'psync' command")
 	}
 
-	replicationID := args[0]
+	replID := args[0]
 	offset := args[1]
 
-	logger.Debug("Received PSYNC %s %s", replicationID, offset)
+	logger.Debug("Received PSYNC %s %s", replID, offset)
 
 	// For now, we always respond with FULLRESYNC
-	// In a real implementation, we would check if we can do partial sync
-	if replicationID == "?" && offset == "-1" {
-		// Replica is requesting full sync
-		// Generate a replication ID (same one we use in INFO command)
-		replID := "8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb"
-		masterOffset := 0
+	// In later stages, we might support partial resyncs
+	masterReplID := "8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb"
+	masterOffset := "0"
 
-		response := fmt.Sprintf("FULLRESYNC %s %d", replID, masterOffset)
-		logger.Info("Sending FULLRESYNC to replica")
-
-		// TODO: In future stages, we'll need to send the RDB file after this response
-
-		return resp.SimpleStringValue(response)
-	}
-
-	// For partial sync requests, we would check if we can continue from the given offset
-	// For now, always force full sync
-	replID := "8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb"
-	masterOffset := 0
-
-	response := fmt.Sprintf("FULLRESYNC %s %d", replID, masterOffset)
+	response := fmt.Sprintf("FULLRESYNC %s %s", masterReplID, masterOffset)
 	return resp.SimpleStringValue(response)
 }
 

@@ -53,6 +53,9 @@ func New(cfg *config.Config) *Server {
 	// Set the propagation function in the registry
 	server.registry.SetPropagateFunc(server.propagateCommand)
 
+	// Set the server reference in the registry
+	server.registry.SetServer(server)
+
 	return server
 }
 
@@ -260,6 +263,20 @@ func (server *Server) removeReplica(conn net.Conn) {
 			break
 		}
 	}
+}
+
+// GetReplicas returns a copy of the current replicas list
+// Implements commands.ServerAccessor interface
+func (server *Server) GetReplicas() []interface{} {
+	server.replicasMu.RLock()
+	defer server.replicasMu.RUnlock()
+
+	// Return as []interface{} to implement ServerAccessor
+	replicas := make([]interface{}, len(server.replicas))
+	for i, r := range server.replicas {
+		replicas[i] = r
+	}
+	return replicas
 }
 
 // propagateCommand sends a command to all connected replicas

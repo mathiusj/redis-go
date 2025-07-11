@@ -18,7 +18,7 @@ func (c *PingCommand) Name() string {
 }
 
 // Execute runs the PING command
-func (c *PingCommand) Execute(args []string, context *Context) resp.Value {
+func (c *PingCommand) Execute(ctx Context, args []string) resp.Value {
 	if len(args) == 0 {
 		return resp.Pong()
 	}

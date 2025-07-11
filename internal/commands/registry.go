@@ -37,6 +37,7 @@ func NewRegistry(cfg *config.Config, store *storage.Storage) *Registry {
 	registry.RegisterCommand(NewInfoCommand())
 	registry.RegisterCommand(NewReplConfCommand())
 	registry.RegisterCommand(NewPsyncCommand())
+	registry.RegisterCommand(NewWaitCommand())
 
 	return registry
 }
@@ -80,7 +81,7 @@ func (r *Registry) HandleCommand(cmdValue resp.Value) resp.Value {
 	}
 
 	// Execute the command
-	return cmd.Execute(args, r.context)
+	return cmd.Execute(*r.context, args)
 }
 
 // GetContext returns the command context
@@ -91,4 +92,9 @@ func (r *Registry) GetContext() *Context {
 // SetPropagateFunc sets the propagation function for command replication
 func (r *Registry) SetPropagateFunc(propagateFunc func(resp.Value)) {
 	r.context.PropagateFunc = propagateFunc
+}
+
+// SetServer sets the server reference for commands that need server access
+func (r *Registry) SetServer(server ServerAccessor) {
+	r.context.Server = server
 }

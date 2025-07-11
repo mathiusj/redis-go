@@ -3,8 +3,6 @@ package commands
 import (
 	"strings"
 
-	"github.com/codecrafters-redis-go/internal/errors"
-	"github.com/codecrafters-redis-go/internal/logger"
 	"github.com/codecrafters-redis-go/internal/resp"
 )
 
@@ -22,30 +20,33 @@ func (c *ReplConfCommand) Name() string {
 }
 
 // Execute runs the REPLCONF command
-func (c *ReplConfCommand) Execute(args []string, context *Context) resp.Value {
-	if len(args) < 2 {
-		return resp.ErrorValue(errors.WrongNumberOfArguments("replconf").Error())
+func (c *ReplConfCommand) Execute(ctx Context, args []string) resp.Value {
+	if len(args) < 1 {
+		return resp.ErrorValue("ERR wrong number of arguments for 'replconf' command")
 	}
 
-	subcommand := strings.ToLower(args[0])
+	subcommand := strings.ToUpper(args[0])
 
 	switch subcommand {
-	case "listening-port":
-		// Handle listening-port subcommand
-		port := args[1]
-		logger.Debug("Received REPLCONF listening-port %s", port)
-		// TODO: In future stages, we might want to store replica information
-		return resp.SimpleStringValue("OK")
+	case "LISTENING-PORT":
+		// Just acknowledge for now
+		return resp.OK()
 
-	case "capa":
-		// Handle capa subcommand
-		capability := args[1]
-		logger.Debug("Received REPLCONF capa %s", capability)
-		// TODO: In future stages, we might want to track replica capabilities
-		return resp.SimpleStringValue("OK")
+	case "CAPA":
+		// Just acknowledge capabilities for now
+		return resp.OK()
+
+	case "GETACK":
+		// Handle GETACK subcommand
+		if len(args) < 2 {
+			return resp.ErrorValue("ERR wrong number of arguments for REPLCONF GETACK")
+		}
+		// For now, just acknowledge
+		// In later stages, we'll implement proper offset tracking
+		return resp.OK()
 
 	default:
-		return resp.ErrorValue("ERR unsupported REPLCONF subcommand '" + subcommand + "'")
+		return resp.ErrorValue("ERR Unknown REPLCONF subcommand '" + args[0] + "'")
 	}
 }
 

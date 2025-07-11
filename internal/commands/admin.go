@@ -3,7 +3,6 @@ package commands
 import (
 	"strings"
 
-	"github.com/codecrafters-redis-go/internal/errors"
 	"github.com/codecrafters-redis-go/internal/resp"
 )
 
@@ -21,49 +20,36 @@ func (c *ConfigCommand) Name() string {
 }
 
 // Execute runs the CONFIG command
-func (c *ConfigCommand) Execute(args []string, context *Context) resp.Value {
-	if len(args) < 1 {
-		return resp.ErrorValue(errors.WrongNumberOfArguments("config").Error())
-	}
-
+func (c *ConfigCommand) Execute(ctx Context, args []string) resp.Value {
 	subcommand := strings.ToUpper(args[0])
 
 	switch subcommand {
 	case "GET":
-		if len(args) != 2 {
-			return resp.ErrorValue(errors.WrongNumberOfArguments("config get").Error())
+		if len(args) < 2 {
+			return resp.ErrorValue("ERR wrong number of arguments for 'config get' command")
 		}
-
-		parameter := strings.ToLower(args[1])
-		value, ok := context.Config.Get(parameter)
-		if !ok {
-			// Return empty array for unknown config parameters
-			return resp.ArrayValue()
-		}
-
-		// Return array with parameter name and value
-		return resp.ArrayValue(
-			resp.BulkStringValue(parameter),
-			resp.BulkStringValue(value),
-		)
-
-	case "SET":
-		if len(args) != 3 {
-			return resp.ErrorValue(errors.WrongNumberOfArguments("config set").Error())
-		}
-
-		parameter := strings.ToLower(args[1])
-		value := args[2]
-
-		if !context.Config.Set(parameter, value) {
-			return resp.ErrorValue("ERR Unsupported CONFIG parameter: " + parameter)
-		}
-
-		return resp.OK()
-
+		return c.handleConfigGet(ctx, args[1])
 	default:
-		return resp.ErrorValue("ERR Unknown subcommand or wrong number of arguments")
+		return resp.ErrorValue("ERR Unknown subcommand '" + args[0] + "'")
 	}
+}
+
+// handleConfigGet handles CONFIG GET subcommand
+func (c *ConfigCommand) handleConfigGet(ctx Context, pattern string) resp.Value {
+	result := []resp.Value{}
+
+	// For now, only support exact matches for "dir" and "dbfilename"
+	if pattern == "dir" || pattern == "*" {
+		result = append(result, resp.BulkStringValue("dir"))
+		result = append(result, resp.BulkStringValue(ctx.Config.Dir))
+	}
+
+	if pattern == "dbfilename" || pattern == "*" {
+		result = append(result, resp.BulkStringValue("dbfilename"))
+		result = append(result, resp.BulkStringValue(ctx.Config.DBFilename))
+	}
+
+	return resp.ArrayValue(result...)
 }
 
 // MinArgs returns the minimum number of arguments
@@ -90,21 +76,19 @@ func (c *KeysCommand) Name() string {
 }
 
 // Execute runs the KEYS command
-func (c *KeysCommand) Execute(args []string, context *Context) resp.Value {
-	if len(args) != 1 {
-		return resp.ErrorValue(errors.WrongNumberOfArguments("keys").Error())
-	}
-
+func (c *KeysCommand) Execute(ctx Context, args []string) resp.Value {
 	pattern := args[0]
-	keys := context.Storage.Keys(pattern)
 
-	// Convert keys to RESP array
-	values := make([]resp.Value, len(keys))
-	for index, key := range keys {
-		values[index] = resp.BulkStringValue(key)
+	// Get all matching keys from storage
+	keys := ctx.Storage.Keys(pattern)
+
+	// Convert to array of bulk strings
+	result := make([]resp.Value, len(keys))
+	for i, key := range keys {
+		result[i] = resp.BulkStringValue(key)
 	}
 
-	return resp.ArrayValue(values...)
+	return resp.ArrayValue(result...)
 }
 
 // MinArgs returns the minimum number of arguments

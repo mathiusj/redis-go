@@ -6,13 +6,18 @@ import (
 	"github.com/codecrafters-redis-go/internal/storage"
 )
 
+// ServerAccessor provides access to server functionality without circular dependency
+type ServerAccessor interface {
+	GetReplicas() []interface{} // Returns replica connections
+}
+
 // Command represents a Redis command implementation
 type Command interface {
 	// Name returns the command name (e.g., "SET", "GET")
 	Name() string
 
 	// Execute runs the command with the given arguments
-	Execute(args []string, context *Context) resp.Value
+	Execute(ctx Context, args []string) resp.Value
 
 	// MinArgs returns the minimum number of arguments required
 	MinArgs() int
@@ -26,6 +31,7 @@ type Context struct {
 	Storage       *storage.Storage
 	Config        *config.Config
 	PropagateFunc func(resp.Value) // Function to propagate commands to replicas
+	Server        ServerAccessor   // Access to server functions
 }
 
 // Validator provides argument validation for commands

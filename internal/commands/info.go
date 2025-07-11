@@ -20,77 +20,44 @@ func (c *InfoCommand) Name() string {
 }
 
 // Execute runs the INFO command
-func (c *InfoCommand) Execute(args []string, context *Context) resp.Value {
-	// Default to all sections if no section specified
+func (c *InfoCommand) Execute(ctx Context, args []string) resp.Value {
 	section := "all"
 	if len(args) > 0 {
 		section = strings.ToLower(args[0])
 	}
 
-	var output []string
-
-	switch section {
-	case "replication":
-		output = c.getReplicationInfo(context)
-	case "all":
-		// For now, we only support replication
-		output = c.getReplicationInfo(context)
-	default:
-		// Return empty bulk string for unknown sections
-		return resp.BulkStringValue("")
-	}
-
-	// Join all lines with CRLF
-	result := strings.Join(output, "\r\n")
-	return resp.BulkStringValue(result)
+	info := c.buildInfo(ctx, section)
+	return resp.BulkStringValue(info)
 }
 
-// getReplicationInfo returns replication information
-func (c *InfoCommand) getReplicationInfo(context *Context) []string {
-	if context.Config.IsReplica() {
-		// Server is configured as a replica
-		host, port := context.Config.GetReplicaInfo()
-		return []string{
-			"# Replication",
-			"role:slave",
-			"master_host:" + host,
-			"master_port:" + port,
-			"master_link_status:down", // For now, we're not connected
-			"master_last_io_seconds_ago:-1",
-			"master_sync_in_progress:0",
-			"slave_read_repl_offset:0",
-			"slave_repl_offset:0",
-			"master_link_down_since_seconds:-1",
-			"slave_priority:100",
-			"slave_read_only:1",
-			"replica_announced:1",
-			"connected_slaves:0",
-			"master_failover_state:no-failover",
-			"master_replid:8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb",
-			"master_replid2:0000000000000000000000000000000000000000",
-			"master_repl_offset:0",
-			"second_repl_offset:-1",
-			"repl_backlog_active:0",
-			"repl_backlog_size:1048576",
-			"repl_backlog_first_byte_offset:0",
-			"repl_backlog_histlen:0",
+// buildInfo constructs the INFO response
+func (c *InfoCommand) buildInfo(ctx Context, section string) string {
+	var info strings.Builder
+
+	if section == "all" || section == "replication" {
+		info.WriteString("# Replication\r\n")
+
+		if ctx.Config.IsReplica() {
+			// Replica mode
+			info.WriteString("role:slave\r\n")
+			// TODO: Add more replica-specific info in later stages
+		} else {
+			// Master mode
+			info.WriteString("role:master\r\n")
+			info.WriteString("master_replid:")
+			info.WriteString(c.getMasterReplID())
+			info.WriteString("\r\n")
+			info.WriteString("master_repl_offset:0\r\n")
 		}
 	}
 
-	// Server is a master
-	return []string{
-		"# Replication",
-		"role:master",
-		"connected_slaves:0",
-		"master_replid:8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb",
-		"master_replid2:0000000000000000000000000000000000000000",
-		"master_repl_offset:0",
-		"second_repl_offset:-1",
-		"repl_backlog_active:0",
-		"repl_backlog_size:1048576",
-		"repl_backlog_first_byte_offset:0",
-		"repl_backlog_histlen:0",
-	}
+	return strings.TrimSpace(info.String())
+}
+
+// getMasterReplID returns the master replication ID
+func (c *InfoCommand) getMasterReplID() string {
+	// Fixed replication ID for now
+	return "8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb"
 }
 
 // MinArgs returns the minimum number of arguments
