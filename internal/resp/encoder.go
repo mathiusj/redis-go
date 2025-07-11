@@ -25,7 +25,7 @@ func (encoder *Encoder) Encode(value Value) error {
 	case Integer:
 		return encoder.encodeInteger(value.Integer)
 	case BulkString:
-		return encoder.encodeBulkString(value.Str)
+		return encoder.encodeBulkString(value)
 	case Array:
 		return encoder.encodeArray(value.Array)
 	default:
@@ -50,12 +50,12 @@ func (encoder *Encoder) encodeInteger(intValue int) error {
 	return encoder.write(fmt.Sprintf(":%d\r\n", intValue))
 }
 
-func (encoder *Encoder) encodeBulkString(str string) error {
-	// Check for null bulk string (special marker)
-	if str == "\x00NULL" {
+func (encoder *Encoder) encodeBulkString(value Value) error {
+	// Check for null bulk string
+	if value.IsNull {
 		return encoder.write("$-1\r\n")
 	}
-	return encoder.write(fmt.Sprintf("$%d\r\n%s\r\n", len(str), str))
+	return encoder.write(fmt.Sprintf("$%d\r\n%s\r\n", len(value.Str), value.Str))
 }
 
 func (encoder *Encoder) encodeArray(array []Value) error {
@@ -101,8 +101,7 @@ func ArrayValue(values ...Value) Value {
 
 // NullBulkString creates a null bulk string value
 func NullBulkString() Value {
-	// Use a special marker to indicate null bulk string
-	return Value{Type: BulkString, Str: "\x00NULL"}
+	return Value{Type: BulkString, IsNull: true}
 }
 
 // OK returns a standard OK simple string

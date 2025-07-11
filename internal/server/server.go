@@ -8,6 +8,7 @@ import (
 
 	"github.com/codecrafters-redis-go/internal/config"
 	"github.com/codecrafters-redis-go/internal/handlers"
+	"github.com/codecrafters-redis-go/internal/logger"
 	"github.com/codecrafters-redis-go/internal/rdb"
 	"github.com/codecrafters-redis-go/internal/resp"
 	"github.com/codecrafters-redis-go/internal/storage"
@@ -41,7 +42,7 @@ func New(addr string, cfg *config.Config) *Server {
 func (server *Server) Start() error {
 	// Load RDB file if it exists
 	if err := rdb.LoadFile(server.config.Dir, server.config.DBFilename, server.storage); err != nil {
-		fmt.Printf("Warning: Failed to load RDB file: %v\n", err)
+		logger.Warn("Failed to load RDB file: %v", err)
 	}
 
 	listener, err := net.Listen("tcp", server.addr)
@@ -50,7 +51,7 @@ func (server *Server) Start() error {
 	}
 
 	server.listener = listener
-	fmt.Printf("Redis server listening on %s\n", server.addr)
+	logger.Info("Redis server listening on %s", server.addr)
 
 	// Accept connections in a goroutine
 	go server.acceptConnections()
@@ -69,6 +70,7 @@ func (server *Server) Stop() error {
 	// Wait for all connections to finish
 	server.wg.Wait()
 
+	logger.Info("Server stopped gracefully")
 	return nil
 }
 
@@ -85,11 +87,12 @@ func (server *Server) acceptConnections() {
 			case <-server.shutdown:
 				return
 			default:
-				fmt.Printf("Error accepting connection: %v\n", err)
+				logger.Error("Error accepting connection: %v", err)
 				continue
 			}
 		}
 
+		logger.Debug("Accepted connection from %s", conn.RemoteAddr())
 		server.wg.Add(1)
 		go server.handleConnection(conn)
 	}
@@ -99,6 +102,7 @@ func (server *Server) handleConnection(conn net.Conn) {
 	defer func() {
 		conn.Close()
 		server.wg.Done()
+		logger.Debug("Closed connection from %s", conn.RemoteAddr())
 	}()
 
 	parser := resp.NewParser(conn)
@@ -129,7 +133,7 @@ func (server *Server) handleConnection(conn net.Conn) {
 
 		// Send the response
 		if err := encoder.Encode(response); err != nil {
-			fmt.Printf("Error sending response: %v\n", err)
+			logger.Error("Error sending response: %v", err)
 			return
 		}
 	}

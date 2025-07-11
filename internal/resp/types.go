@@ -19,6 +19,7 @@ type Value struct {
 	Str     string  // Renamed from String to avoid conflict with String() method
 	Integer int
 	Array   []Value
+	IsNull  bool    // Indicates if this is a null value (for bulk strings or arrays)
 }
 
 // String returns a string representation of the value
@@ -27,8 +28,7 @@ func (value Value) String() string {
 	case SimpleString, Error:
 		return value.Str
 	case BulkString:
-		// Handle null bulk string
-		if value.Str == "\x00NULL" {
+		if value.IsNull {
 			return ""
 		}
 		return value.Str

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/codecrafters-redis-go/internal/config"
+	"github.com/codecrafters-redis-go/internal/errors"
 	"github.com/codecrafters-redis-go/internal/resp"
 	"github.com/codecrafters-redis-go/internal/storage"
 )
@@ -70,7 +71,7 @@ func (registry *Registry) HandleCommand(cmd resp.Value) resp.Value {
 
 	handler, ok := registry.Get(command)
 	if !ok {
-		return resp.ErrorValue("ERR unknown command '" + command + "'")
+		return resp.ErrorValue(errors.UnknownCommand(command).Error())
 	}
 
 	args := cmd.GetArgs()
@@ -89,7 +90,7 @@ func (registry *Registry) handlePing(args []string) resp.Value {
 
 func (registry *Registry) handleEcho(args []string) resp.Value {
 	if len(args) == 0 {
-		return resp.ErrorValue("ERR wrong number of arguments for 'echo' command")
+		return resp.ErrorValue(errors.WrongNumberOfArguments("echo").Error())
 	}
 	// ECHO returns the argument as a bulk string
 	return resp.BulkStringValue(args[0])
@@ -97,7 +98,7 @@ func (registry *Registry) handleEcho(args []string) resp.Value {
 
 func (registry *Registry) handleSet(args []string) resp.Value {
 	if len(args) < 2 {
-		return resp.ErrorValue("ERR wrong number of arguments for 'set' command")
+		return resp.ErrorValue(errors.WrongNumberOfArguments("set").Error())
 	}
 
 	key := args[0]
@@ -112,11 +113,11 @@ func (registry *Registry) handleSet(args []string) resp.Value {
 		switch option {
 		case "EX": // Expire in seconds
 			if argIndex+1 >= len(args) {
-				return resp.ErrorValue("ERR syntax error")
+				return resp.ErrorValue(errors.ErrSyntaxError.Error())
 			}
 			seconds, err := strconv.Atoi(args[argIndex+1])
 			if err != nil || seconds <= 0 {
-				return resp.ErrorValue("ERR invalid expire time in set")
+				return resp.ErrorValue(errors.InvalidExpireTime("set").Error())
 			}
 			expirationTime := time.Now().Add(time.Duration(seconds) * time.Second)
 			expiration = &expirationTime
@@ -124,18 +125,18 @@ func (registry *Registry) handleSet(args []string) resp.Value {
 
 		case "PX": // Expire in milliseconds
 			if argIndex+1 >= len(args) {
-				return resp.ErrorValue("ERR syntax error")
+				return resp.ErrorValue(errors.ErrSyntaxError.Error())
 			}
 			milliseconds, err := strconv.Atoi(args[argIndex+1])
 			if err != nil || milliseconds <= 0 {
-				return resp.ErrorValue("ERR invalid expire time in set")
+				return resp.ErrorValue(errors.InvalidExpireTime("set").Error())
 			}
 			expirationTime := time.Now().Add(time.Duration(milliseconds) * time.Millisecond)
 			expiration = &expirationTime
 			argIndex += 2
 
 		default:
-			return resp.ErrorValue("ERR syntax error")
+			return resp.ErrorValue(errors.ErrSyntaxError.Error())
 		}
 	}
 
@@ -146,7 +147,7 @@ func (registry *Registry) handleSet(args []string) resp.Value {
 
 func (registry *Registry) handleGet(args []string) resp.Value {
 	if len(args) != 1 {
-		return resp.ErrorValue("ERR wrong number of arguments for 'get' command")
+		return resp.ErrorValue(errors.WrongNumberOfArguments("get").Error())
 	}
 
 	key := args[0]
@@ -161,7 +162,7 @@ func (registry *Registry) handleGet(args []string) resp.Value {
 
 func (registry *Registry) handleConfig(args []string) resp.Value {
 	if len(args) < 1 {
-		return resp.ErrorValue("ERR wrong number of arguments for 'config' command")
+		return resp.ErrorValue(errors.WrongNumberOfArguments("config").Error())
 	}
 
 	subcommand := strings.ToUpper(args[0])
@@ -169,7 +170,7 @@ func (registry *Registry) handleConfig(args []string) resp.Value {
 	switch subcommand {
 	case "GET":
 		if len(args) != 2 {
-			return resp.ErrorValue("ERR wrong number of arguments for 'config get' command")
+			return resp.ErrorValue(errors.WrongNumberOfArguments("config get").Error())
 		}
 
 		parameter := strings.ToLower(args[1])
@@ -187,7 +188,7 @@ func (registry *Registry) handleConfig(args []string) resp.Value {
 
 	case "SET":
 		if len(args) != 3 {
-			return resp.ErrorValue("ERR wrong number of arguments for 'config set' command")
+			return resp.ErrorValue(errors.WrongNumberOfArguments("config set").Error())
 		}
 
 		parameter := strings.ToLower(args[1])
@@ -206,7 +207,7 @@ func (registry *Registry) handleConfig(args []string) resp.Value {
 
 func (registry *Registry) handleKeys(args []string) resp.Value {
 	if len(args) != 1 {
-		return resp.ErrorValue("ERR wrong number of arguments for 'keys' command")
+		return resp.ErrorValue(errors.WrongNumberOfArguments("keys").Error())
 	}
 
 	pattern := args[0]

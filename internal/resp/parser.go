@@ -94,8 +94,8 @@ func (parser *Parser) parseBulkString() (Value, error) {
 	}
 
 	if length == -1 {
-		// Null bulk string - use special marker
-		return Value{Type: BulkString, Str: "\x00NULL"}, nil
+		// Null bulk string
+		return Value{Type: BulkString, IsNull: true}, nil
 	}
 
 	if length < 0 {
@@ -126,7 +126,7 @@ func (parser *Parser) parseArray() (Value, error) {
 
 	if count == -1 {
 		// Null array
-		return Value{Type: Array, Array: []Value{}}, nil
+		return Value{Type: Array, IsNull: true}, nil
 	}
 
 	if count < 0 {
