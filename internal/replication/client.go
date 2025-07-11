@@ -249,6 +249,7 @@ func (c *Client) receiveRDB() error {
 	// We need to handle this specially since it's non-standard RESP
 
 	// Read the first byte to check if it's a bulk string
+	logger.Debug("Reading first byte to check for RDB...")
 	firstByte := make([]byte, 1)
 	n, err := c.conn.Read(firstByte)
 	if err != nil {
@@ -257,11 +258,15 @@ func (c *Client) receiveRDB() error {
 			logger.Debug("No RDB sent (EOF)")
 			return nil
 		}
+		logger.Debug("Error reading first byte: %v", err)
 		return fmt.Errorf("failed to read first byte: %w", err)
 	}
 	if n != 1 {
+		logger.Debug("Failed to read first byte, got %d bytes", n)
 		return fmt.Errorf("failed to read first byte")
 	}
+
+	logger.Debug("First byte read: %c (0x%02x)", firstByte[0], firstByte[0])
 
 	// If it's not a bulk string, the next command is already here
 	if firstByte[0] != '$' {
@@ -281,14 +286,17 @@ func (c *Client) receiveRDB() error {
 	}
 
 	// It's a bulk string, read the length
+	logger.Debug("Reading RDB length...")
 	lengthStr := ""
 	for {
 		b := make([]byte, 1)
 		n, err := c.conn.Read(b)
 		if err != nil {
+			logger.Debug("Error reading length: %v", err)
 			return fmt.Errorf("failed to read length: %w", err)
 		}
 		if n != 1 {
+			logger.Debug("Failed to read length byte")
 			return fmt.Errorf("failed to read length byte")
 		}
 
@@ -306,26 +314,31 @@ func (c *Client) receiveRDB() error {
 	// Parse the length
 	length, err := strconv.Atoi(lengthStr)
 	if err != nil {
+		logger.Debug("Invalid RDB length: %s", lengthStr)
 		return fmt.Errorf("invalid RDB length: %s", lengthStr)
 	}
 
 	logger.Debug("RDB length: %d", length)
 
 	// Read the RDB data (WITHOUT expecting trailing CRLF)
+	logger.Debug("Reading %d bytes of RDB data...", length)
 	rdbData := make([]byte, length)
 	bytesRead := 0
 	for bytesRead < length {
 		n, err := c.conn.Read(rdbData[bytesRead:])
 		if err != nil {
+			logger.Debug("Error reading RDB data at offset %d: %v", bytesRead, err)
 			return fmt.Errorf("failed to read RDB data: %w", err)
 		}
 		bytesRead += n
+		logger.Debug("Read %d bytes, total: %d/%d", n, bytesRead, length)
 	}
 
 	logger.Debug("Received RDB file: %d bytes", len(rdbData))
 	// TODO: In future stages, parse and apply the RDB data
 
 	// Important: Do NOT read trailing CRLF because it's not sent for RDB in replication
+	logger.Debug("RDB reception complete")
 
 	return nil
 }
