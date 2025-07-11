@@ -16,16 +16,24 @@ import (
 	"github.com/codecrafters-redis-go/internal/storage"
 )
 
+// Replica represents a connected replica
+type Replica struct {
+	conn    net.Conn
+	encoder *resp.Encoder
+}
+
 // Server represents a Redis server
 type Server struct {
-	addr            string
-	config          *config.Config
-	storage         *storage.Storage
-	registry        *commands.Registry
-	listener        net.Listener
-	wg              sync.WaitGroup
-	shutdown        chan struct{}
+	addr              string
+	config            *config.Config
+	storage           *storage.Storage
+	registry          *commands.Registry
+	listener          net.Listener
+	wg                sync.WaitGroup
+	shutdown          chan struct{}
 	replicationClient *replication.Client
+	replicas          []*Replica
+	replicasMu        sync.RWMutex
 }
 
 // New creates a new Redis server
@@ -33,13 +41,19 @@ func New(cfg *config.Config) *Server {
 	store := storage.New()
 	addr := fmt.Sprintf("0.0.0.0:%d", cfg.Port)
 
-	return &Server{
+	server := &Server{
 		addr:     addr,
 		config:   cfg,
 		storage:  store,
 		registry: commands.NewRegistry(cfg, store),
 		shutdown: make(chan struct{}),
+		replicas: make([]*Replica, 0),
 	}
+
+	// Set the propagation function in the registry
+	server.registry.SetPropagateFunc(server.propagateCommand)
+
+	return server
 }
 
 // Start begins listening for connections
@@ -129,11 +143,14 @@ func (server *Server) handleConnection(conn net.Conn) {
 	defer func() {
 		conn.Close()
 		server.wg.Done()
+		// Remove replica if this was a replica connection
+		server.removeReplica(conn)
 		logger.Debug("Closed connection from %s", conn.RemoteAddr())
 	}()
 
 	parser := resp.NewParser(conn)
 	encoder := resp.NewEncoder(conn)
+	isReplica := false
 
 	for {
 		// Check for shutdown
@@ -190,6 +207,10 @@ func (server *Server) handleConnection(conn net.Conn) {
 
 				// Note: NOT sending trailing CRLF as expected by replication protocol
 				logger.Debug("Successfully sent RDB file without trailing CRLF")
+
+				// Mark this connection as a replica
+				isReplica = true
+				server.addReplica(conn)
 				continue
 			}
 		}
@@ -200,12 +221,78 @@ func (server *Server) handleConnection(conn net.Conn) {
 			logger.Error("Error sending response: %v", err)
 			return
 		}
+
+		// Propagate write commands to replicas (only if this is not a replica connection)
+		if !isReplica && server.shouldPropagate(cmdName) && response.Type != resp.Error {
+			logger.Debug("Propagating command %s to replicas", cmdName)
+			server.propagateCommand(value)
+		}
 	}
 }
 
 // RegisterCommand adds a custom command implementation
 func (server *Server) RegisterCommand(cmd commands.Command) {
 	server.registry.RegisterCommand(cmd)
+}
+
+// addReplica adds a new replica to the server's replica list
+func (server *Server) addReplica(conn net.Conn) {
+	server.replicasMu.Lock()
+	defer server.replicasMu.Unlock()
+
+	replica := &Replica{
+		conn:    conn,
+		encoder: resp.NewEncoder(conn),
+	}
+	server.replicas = append(server.replicas, replica)
+	logger.Info("Added new replica: %s", conn.RemoteAddr())
+}
+
+// removeReplica removes a replica from the server's replica list
+func (server *Server) removeReplica(conn net.Conn) {
+	server.replicasMu.Lock()
+	defer server.replicasMu.Unlock()
+
+	for i, replica := range server.replicas {
+		if replica.conn == conn {
+			server.replicas = append(server.replicas[:i], server.replicas[i+1:]...)
+			logger.Info("Removed replica: %s", conn.RemoteAddr())
+			break
+		}
+	}
+}
+
+// propagateCommand sends a command to all connected replicas
+func (server *Server) propagateCommand(command resp.Value) {
+	server.replicasMu.RLock()
+	defer server.replicasMu.RUnlock()
+
+	for _, replica := range server.replicas {
+		if err := replica.encoder.Encode(command); err != nil {
+			logger.Error("Failed to propagate command to replica %s: %v", replica.conn.RemoteAddr(), err)
+			// TODO: Remove failed replica
+		}
+	}
+}
+
+// shouldPropagate returns true if the command should be propagated to replicas
+func (server *Server) shouldPropagate(cmdName string) bool {
+	// List of write commands that should be propagated
+	writeCommands := map[string]bool{
+		"SET":    true,
+		"DEL":    true,
+		"EXPIRE": true,
+		"INCR":   true,
+		"DECR":   true,
+		"RPUSH":  true,
+		"LPUSH":  true,
+		"SADD":   true,
+		"SREM":   true,
+		"HSET":   true,
+		"HDEL":   true,
+	}
+
+	return writeCommands[strings.ToUpper(cmdName)]
 }
 
 // connectToMaster establishes connection to master and performs handshake

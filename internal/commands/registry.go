@@ -87,3 +87,8 @@ func (r *Registry) HandleCommand(cmdValue resp.Value) resp.Value {
 func (r *Registry) GetContext() *Context {
 	return r.context
 }
+
+// SetPropagateFunc sets the propagation function for command replication
+func (r *Registry) SetPropagateFunc(propagateFunc func(resp.Value)) {
+	r.context.PropagateFunc = propagateFunc
+}

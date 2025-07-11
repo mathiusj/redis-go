@@ -23,8 +23,9 @@ type Command interface {
 
 // Context provides shared resources to commands
 type Context struct {
-	Storage *storage.Storage
-	Config  *config.Config
+	Storage       *storage.Storage
+	Config        *config.Config
+	PropagateFunc func(resp.Value) // Function to propagate commands to replicas
 }
 
 // Validator provides argument validation for commands
