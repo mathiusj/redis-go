@@ -100,3 +100,36 @@ func (c *KeysCommand) MinArgs() int {
 func (c *KeysCommand) MaxArgs() int {
 	return 1
 }
+
+// TypeCommand implements the TYPE command
+type TypeCommand struct{}
+
+func NewTypeCommand() *TypeCommand {
+	return &TypeCommand{}
+}
+
+func (c *TypeCommand) Name() string {
+	return "TYPE"
+}
+
+func (c *TypeCommand) Execute(ctx Context, args []string) resp.Value {
+	key := args[0]
+
+	// Check if key exists (Get already handles expiry checking)
+	_, exists := ctx.Storage.Get(key)
+	if !exists {
+		return resp.SimpleStringValue("none")
+	}
+
+	// For now, we only support strings
+	// In future stages, we'll add support for other types (list, set, hash, stream, etc.)
+	return resp.SimpleStringValue("string")
+}
+
+func (c *TypeCommand) MinArgs() int {
+	return 1
+}
+
+func (c *TypeCommand) MaxArgs() int {
+	return 1
+}
