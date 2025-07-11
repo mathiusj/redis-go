@@ -3,6 +3,7 @@ package replication
 import (
 	"fmt"
 	"net"
+	"strings"
 	"time"
 
 	"github.com/codecrafters-redis-go/internal/logger"
@@ -66,7 +67,10 @@ func (c *Client) Handshake() error {
 		return fmt.Errorf("failed to send REPLCONF: %w", err)
 	}
 
-	// TODO: Add more handshake steps (PSYNC) in future stages
+	// Step 3: Send PSYNC
+	if err := c.sendPsync(); err != nil {
+		return fmt.Errorf("failed to send PSYNC: %w", err)
+	}
 
 	return nil
 }
@@ -175,5 +179,57 @@ func (c *Client) sendReplConfCapa() error {
 	}
 
 	logger.Debug("Received OK for REPLCONF capa from master")
+	return nil
+}
+
+// sendPsync sends PSYNC command to initiate replication
+func (c *Client) sendPsync() error {
+	logger.Debug("Sending PSYNC ? -1 to master")
+
+	// Create PSYNC command
+	// "?" means we don't have a previous replication ID
+	// "-1" means we don't have any offset
+	psyncCmd := resp.ArrayValue(
+		resp.BulkStringValue("PSYNC"),
+		resp.BulkStringValue("?"),
+		resp.BulkStringValue("-1"),
+	)
+
+	// Send PSYNC
+	if err := c.encoder.Encode(psyncCmd); err != nil {
+		return fmt.Errorf("failed to encode PSYNC: %w", err)
+	}
+
+	// Read response
+	response, err := c.parser.Parse()
+	if err != nil {
+		return fmt.Errorf("failed to read PSYNC response: %w", err)
+	}
+
+	// Check if response is FULLRESYNC
+	if response.Type != resp.SimpleString {
+		return fmt.Errorf("unexpected PSYNC response type: %v", response.Type)
+	}
+
+	// Parse FULLRESYNC response
+	// Format: +FULLRESYNC <replid> <offset>
+	if len(response.Str) < 11 || response.Str[:11] != "FULLRESYNC " {
+		return fmt.Errorf("unexpected PSYNC response: %s", response.Str)
+	}
+
+	// Extract replication ID and offset from response
+	parts := strings.Fields(response.Str)
+	if len(parts) != 3 {
+		return fmt.Errorf("invalid FULLRESYNC response format: %s", response.Str)
+	}
+
+	replID := parts[1]
+	offset := parts[2]
+
+	logger.Info("Received FULLRESYNC with replid=%s offset=%s", replID, offset)
+
+	// TODO: In future stages, we'll need to receive and process the RDB file
+	// that follows the FULLRESYNC response
+
 	return nil
 }
