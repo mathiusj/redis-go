@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/codecrafters-redis-go/internal/config"
 	"github.com/codecrafters-redis-go/internal/resp"
 	"github.com/codecrafters-redis-go/internal/storage"
 )
@@ -18,13 +19,15 @@ type Registry struct {
 	mu       sync.RWMutex
 	handlers map[string]Handler
 	storage  *storage.Storage
+	config   *config.Config
 }
 
 // NewRegistry creates a new command registry
-func NewRegistry() *Registry {
+func NewRegistry(cfg *config.Config) *Registry {
 	registry := &Registry{
 		handlers: make(map[string]Handler),
 		storage:  storage.New(),
+		config:   cfg,
 	}
 
 	// Register default handlers
@@ -32,6 +35,7 @@ func NewRegistry() *Registry {
 	registry.Register("ECHO", registry.handleEcho)
 	registry.Register("SET", registry.handleSet)
 	registry.Register("GET", registry.handleGet)
+	registry.Register("CONFIG", registry.handleConfig)
 
 	return registry
 }
@@ -147,4 +151,49 @@ func (registry *Registry) handleGet(args []string) resp.Value {
 	}
 
 	return resp.BulkStringValue(value)
+}
+
+func (registry *Registry) handleConfig(args []string) resp.Value {
+	if len(args) < 1 {
+		return resp.ErrorValue("ERR wrong number of arguments for 'config' command")
+	}
+
+	subcommand := strings.ToUpper(args[0])
+
+	switch subcommand {
+	case "GET":
+		if len(args) != 2 {
+			return resp.ErrorValue("ERR wrong number of arguments for 'config get' command")
+		}
+
+		parameter := strings.ToLower(args[1])
+		value, ok := registry.config.Get(parameter)
+		if !ok {
+			// Return empty array for unknown config parameters
+			return resp.ArrayValue()
+		}
+
+		// Return array with parameter name and value
+		return resp.ArrayValue(
+			resp.BulkStringValue(parameter),
+			resp.BulkStringValue(value),
+		)
+
+	case "SET":
+		if len(args) != 3 {
+			return resp.ErrorValue("ERR wrong number of arguments for 'config set' command")
+		}
+
+		parameter := strings.ToLower(args[1])
+		value := args[2]
+
+		if !registry.config.Set(parameter, value) {
+			return resp.ErrorValue("ERR Unsupported CONFIG parameter: " + parameter)
+		}
+
+		return resp.OK()
+
+	default:
+		return resp.ErrorValue("ERR Unknown subcommand or wrong number of arguments")
+	}
 }
