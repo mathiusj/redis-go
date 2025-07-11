@@ -337,7 +337,11 @@ func (server *Server) processReplicationStream() {
 		}
 
 		// Execute the command locally
-		cmdName, _ := command.GetCommand()
+		cmdName, cmdErr := command.GetCommand()
+		if cmdErr != nil {
+			logger.Error("Error getting command name: %v", cmdErr)
+			continue
+		}
 		args := command.GetArgs()
 		logger.Debug("Received command from master: %s", cmdName)
 
