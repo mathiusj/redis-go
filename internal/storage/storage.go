@@ -77,3 +77,33 @@ func (storage *Storage) Size() int {
 	defer storage.mu.RUnlock()
 	return len(storage.data)
 }
+
+// Keys returns all keys matching the given pattern
+func (storage *Storage) Keys(pattern string) []string {
+	storage.mu.RLock()
+	defer storage.mu.RUnlock()
+
+	keys := make([]string, 0)
+
+	// Simple pattern matching for now
+	if pattern == "*" {
+		// Return all non-expired keys
+		for key, entry := range storage.data {
+			// Check if expired
+			if entry.Expiration != nil && time.Now().After(*entry.Expiration) {
+				continue
+			}
+			keys = append(keys, key)
+		}
+	} else {
+		// For now, just support exact match
+		if entry, ok := storage.data[pattern]; ok {
+			// Check if expired
+			if entry.Expiration == nil || time.Now().Before(*entry.Expiration) {
+				keys = append(keys, pattern)
+			}
+		}
+	}
+
+	return keys
+}

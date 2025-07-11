@@ -24,9 +24,14 @@ type Registry struct {
 
 // NewRegistry creates a new command registry
 func NewRegistry(cfg *config.Config) *Registry {
+	return NewRegistryWithStorage(cfg, storage.New())
+}
+
+// NewRegistryWithStorage creates a new command registry with a provided storage
+func NewRegistryWithStorage(cfg *config.Config, store *storage.Storage) *Registry {
 	registry := &Registry{
 		handlers: make(map[string]Handler),
-		storage:  storage.New(),
+		storage:  store,
 		config:   cfg,
 	}
 
@@ -36,6 +41,7 @@ func NewRegistry(cfg *config.Config) *Registry {
 	registry.Register("SET", registry.handleSet)
 	registry.Register("GET", registry.handleGet)
 	registry.Register("CONFIG", registry.handleConfig)
+	registry.Register("KEYS", registry.handleKeys)
 
 	return registry
 }
@@ -196,4 +202,24 @@ func (registry *Registry) handleConfig(args []string) resp.Value {
 	default:
 		return resp.ErrorValue("ERR Unknown subcommand or wrong number of arguments")
 	}
+}
+
+func (registry *Registry) handleKeys(args []string) resp.Value {
+	if len(args) != 1 {
+		return resp.ErrorValue("ERR wrong number of arguments for 'keys' command")
+	}
+
+	pattern := args[0]
+
+	// For now, we'll implement simple pattern matching
+	// "*" means all keys
+	keys := registry.storage.Keys(pattern)
+
+	// Convert keys to RESP array
+	values := make([]resp.Value, len(keys))
+	for index, key := range keys {
+		values[index] = resp.BulkStringValue(key)
+	}
+
+	return resp.ArrayValue(values...)
 }
