@@ -4,168 +4,142 @@ import (
 	"sync"
 	"time"
 
-	"github.com/codecrafters-redis-go/internal/logger"
 	"github.com/codecrafters-redis-go/internal/utils"
 )
 
-// Entry represents a stored value with optional expiration
-type Entry struct {
-	Value      string
-	Expiration *time.Time
+// ValueType interface for different Redis data types
+type ValueType interface {
+	Type() string
 }
 
-// Storage provides thread-safe key-value storage
+// StringValue represents a Redis string value
+type StringValue struct {
+	Value string
+}
+
+func (s StringValue) Type() string {
+	return "string"
+}
+
+type entry struct {
+	value  interface{}
+	expiry *time.Time
+}
+
 type Storage struct {
-	mu    sync.RWMutex
-	data  map[string]*Entry
-
-	// Background cleanup
-	cleanupInterval time.Duration
-	stopCleanup     chan struct{}
-	cleanupDone     sync.WaitGroup
+	mu      sync.RWMutex
+	data    map[string]entry
+	done    chan struct{}
+	stopped bool
 }
 
-// New creates a new storage instance
 func New() *Storage {
-	return NewWithCleanupInterval(1 * time.Minute)
+	s := &Storage{
+		data: make(map[string]entry),
+		done: make(chan struct{}),
+	}
+	go s.cleanupExpired()
+	return s
 }
 
-// NewWithCleanupInterval creates a new storage instance with custom cleanup interval
-func NewWithCleanupInterval(interval time.Duration) *Storage {
-	storage := &Storage{
-		data:            make(map[string]*Entry),
-		cleanupInterval: interval,
-		stopCleanup:     make(chan struct{}),
+func (s *Storage) Set(key string, value interface{}, expiry *time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.data[key] = entry{value: value, expiry: expiry}
+}
+
+func (s *Storage) Get(key string) (interface{}, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	e, exists := s.data[key]
+	if !exists {
+		return nil, false
 	}
 
-	// Start background cleanup if interval is positive
-	if interval > 0 {
-		storage.startCleanup()
+	if e.expiry != nil && time.Now().After(*e.expiry) {
+		// Key has expired, remove it
+		s.mu.RUnlock()
+		s.mu.Lock()
+		delete(s.data, key)
+		s.mu.Unlock()
+		s.mu.RLock()
+		return nil, false
 	}
 
-	return storage
+	return e.value, true
 }
 
-// startCleanup starts the background cleanup goroutine
-func (storage *Storage) startCleanup() {
-	storage.cleanupDone.Add(1)
-	go func() {
-		defer storage.cleanupDone.Done()
+// GetString gets a value and returns it as a string if it's a string type
+func (s *Storage) GetString(key string) (string, bool) {
+	val, exists := s.Get(key)
+	if !exists {
+		return "", false
+	}
 
-		ticker := time.NewTicker(storage.cleanupInterval)
-		defer ticker.Stop()
-
-		for {
-			select {
-			case <-ticker.C:
-				count := storage.cleanupExpired()
-				if count > 0 {
-					logger.Debug("Cleaned up %d expired keys", count)
-				}
-			case <-storage.stopCleanup:
-				return
-			}
-		}
-	}()
+	switch v := val.(type) {
+	case string:
+		return v, true
+	case StringValue:
+		return v.Value, true
+	default:
+		return "", false
+	}
 }
 
-// cleanupExpired removes all expired entries and returns the count
-func (storage *Storage) cleanupExpired() int {
-	storage.mu.Lock()
-	defer storage.mu.Unlock()
+func (s *Storage) Delete(key string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.data, key)
+}
 
+func (s *Storage) Keys(pattern string) []string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	var keys []string
 	now := time.Now()
-	count := 0
 
-	for key, entry := range storage.data {
-		if entry.Expiration != nil && now.After(*entry.Expiration) {
-			delete(storage.data, key)
-			count++
-		}
-	}
-
-	return count
-}
-
-// Close stops the background cleanup goroutine
-func (storage *Storage) Close() {
-	close(storage.stopCleanup)
-	storage.cleanupDone.Wait()
-}
-
-// Set stores a key-value pair
-func (storage *Storage) Set(key, value string, expiration *time.Time) {
-	storage.mu.Lock()
-	defer storage.mu.Unlock()
-
-	storage.data[key] = &Entry{
-		Value:      value,
-		Expiration: expiration,
-	}
-}
-
-// Get retrieves a value by key
-func (storage *Storage) Get(key string) (string, bool) {
-	storage.mu.Lock()
-	defer storage.mu.Unlock()
-
-	entry, ok := storage.data[key]
-	if !ok {
-		return "", false
-	}
-
-	// Check if expired
-	if entry.Expiration != nil && time.Now().After(*entry.Expiration) {
-		// Remove expired entry
-		delete(storage.data, key)
-		return "", false
-	}
-
-	return entry.Value, true
-}
-
-// Delete removes a key from storage
-func (storage *Storage) Delete(key string) bool {
-	storage.mu.Lock()
-	defer storage.mu.Unlock()
-
-	_, existed := storage.data[key]
-	delete(storage.data, key)
-	return existed
-}
-
-// Exists checks if a key exists and is not expired
-func (storage *Storage) Exists(key string) bool {
-	_, ok := storage.Get(key)
-	return ok
-}
-
-// Size returns the number of keys in storage
-func (storage *Storage) Size() int {
-	storage.mu.RLock()
-	defer storage.mu.RUnlock()
-	return len(storage.data)
-}
-
-// Keys returns all keys matching the given pattern
-func (storage *Storage) Keys(pattern string) []string {
-	storage.mu.RLock()
-	defer storage.mu.RUnlock()
-
-	keys := make([]string, 0)
-
-	// Iterate through all keys and check pattern match
-	for key, entry := range storage.data {
-		// Check if expired
-		if entry.Expiration != nil && time.Now().After(*entry.Expiration) {
+	for key, e := range s.data {
+		// Skip expired keys
+		if e.expiry != nil && now.After(*e.expiry) {
 			continue
 		}
 
-		// Check if key matches pattern
-		if utils.MatchPattern(pattern, key) {
+		if pattern == "*" || utils.MatchPattern(pattern, key) {
 			keys = append(keys, key)
 		}
 	}
 
 	return keys
+}
+
+func (s *Storage) cleanupExpired() {
+	ticker := time.NewTicker(1 * time.Minute)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			s.mu.Lock()
+			now := time.Now()
+			for key, e := range s.data {
+				if e.expiry != nil && now.After(*e.expiry) {
+					delete(s.data, key)
+				}
+			}
+			s.mu.Unlock()
+		case <-s.done:
+			return
+		}
+	}
+}
+
+func (s *Storage) Close() {
+	s.mu.Lock()
+	if !s.stopped {
+		s.stopped = true
+		close(s.done)
+	}
+	s.mu.Unlock()
 }

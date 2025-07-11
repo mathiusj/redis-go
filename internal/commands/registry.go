@@ -39,6 +39,7 @@ func NewRegistry(cfg *config.Config, store *storage.Storage) *Registry {
 	registry.RegisterCommand(NewPsyncCommand())
 	registry.RegisterCommand(NewWaitCommand())
 	registry.RegisterCommand(NewTypeCommand())
+	registry.RegisterCommand(NewXAddCommand())
 
 	return registry
 }

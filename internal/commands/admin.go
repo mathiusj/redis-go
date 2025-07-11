@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"github.com/codecrafters-redis-go/internal/resp"
+	"github.com/codecrafters-redis-go/internal/storage"
 )
 
 // ConfigCommand implements the CONFIG command
@@ -115,15 +116,26 @@ func (c *TypeCommand) Name() string {
 func (c *TypeCommand) Execute(ctx Context, args []string) resp.Value {
 	key := args[0]
 
-	// Check if key exists (Get already handles expiry checking)
-	_, exists := ctx.Storage.Get(key)
+	// Check if key exists
+	val, exists := ctx.Storage.Get(key)
 	if !exists {
 		return resp.SimpleStringValue("none")
 	}
 
-	// For now, we only support strings
-	// In future stages, we'll add support for other types (list, set, hash, stream, etc.)
-	return resp.SimpleStringValue("string")
+	// Determine the type
+	switch v := val.(type) {
+	case string:
+		return resp.SimpleStringValue("string")
+	case storage.StringValue:
+		return resp.SimpleStringValue("string")
+	case *storage.Stream:
+		return resp.SimpleStringValue("stream")
+	case storage.ValueType:
+		return resp.SimpleStringValue(v.Type())
+	default:
+		// Default to string for unknown types
+		return resp.SimpleStringValue("string")
+	}
 }
 
 func (c *TypeCommand) MinArgs() int {

@@ -2,9 +2,9 @@ package commands
 
 import (
 	"strconv"
-	"strings"
 	"time"
 
+	"github.com/codecrafters-redis-go/internal/errors"
 	"github.com/codecrafters-redis-go/internal/resp"
 )
 
@@ -26,57 +26,31 @@ func (c *SetCommand) Execute(ctx Context, args []string) resp.Value {
 	key := args[0]
 	value := args[1]
 
-	// Parse options
-	var ttl *time.Duration
-	var condition string
+	var expiry *time.Time
 
+	// Parse optional arguments
 	for i := 2; i < len(args); i++ {
-		opt := strings.ToUpper(args[i])
-		switch opt {
-		case "PX":
+		switch args[i] {
+		case "px", "PX":
 			if i+1 >= len(args) {
-				return resp.ErrorValue("ERR syntax error")
+				return resp.ErrorValue(errors.ErrSyntaxError.Error())
 			}
-			ms, err := strconv.Atoi(args[i+1])
+			ms, err := strconv.ParseInt(args[i+1], 10, 64)
 			if err != nil || ms <= 0 {
-				return resp.ErrorValue("ERR invalid expire time in set")
+				return resp.ErrorValue(errors.ErrInvalidExpireTime.Error())
 			}
-			d := time.Duration(ms) * time.Millisecond
-			ttl = &d
+			exp := time.Now().Add(time.Duration(ms) * time.Millisecond)
+			expiry = &exp
 			i++ // Skip the next argument
-		case "NX":
-			condition = "NX"
-		case "XX":
-			condition = "XX"
-		default:
-			return resp.ErrorValue("ERR syntax error")
 		}
 	}
 
-	// Apply conditions
-	switch condition {
-	case "NX":
-		if ctx.Storage.Exists(key) {
-			return resp.NullBulkString()
-		}
-	case "XX":
-		if !ctx.Storage.Exists(key) {
-			return resp.NullBulkString()
-		}
-	}
+	// Store the value as a string
+	ctx.Storage.Set(key, value, expiry)
 
-	// Set the value
-	var expiration *time.Time
-	if ttl != nil {
-		exp := time.Now().Add(*ttl)
-		expiration = &exp
-	}
-	ctx.Storage.Set(key, value, expiration)
+	// Propagate to replicas - don't do it here, let the server handle it
 
-	// Don't propagate here - let the server handle propagation uniformly
-	// The server will propagate the original command after successful execution
-
-	return resp.OK()
+	return resp.SimpleStringValue("OK")
 }
 
 // MinArgs returns the minimum number of arguments
@@ -105,10 +79,12 @@ func (c *GetCommand) Name() string {
 // Execute runs the GET command
 func (c *GetCommand) Execute(ctx Context, args []string) resp.Value {
 	key := args[0]
-	value, exists := ctx.Storage.Get(key)
+
+	value, exists := ctx.Storage.GetString(key)
 	if !exists {
 		return resp.NullBulkString()
 	}
+
 	return resp.BulkStringValue(value)
 }
 
