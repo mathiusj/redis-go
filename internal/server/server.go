@@ -10,19 +10,21 @@ import (
 	"github.com/codecrafters-redis-go/internal/config"
 	"github.com/codecrafters-redis-go/internal/logger"
 	"github.com/codecrafters-redis-go/internal/rdb"
+	"github.com/codecrafters-redis-go/internal/replication"
 	"github.com/codecrafters-redis-go/internal/resp"
 	"github.com/codecrafters-redis-go/internal/storage"
 )
 
 // Server represents a Redis server
 type Server struct {
-	addr     string
-	config   *config.Config
-	storage  *storage.Storage
-	registry *commands.Registry
-	listener net.Listener
-	wg       sync.WaitGroup
-	shutdown chan struct{}
+	addr            string
+	config          *config.Config
+	storage         *storage.Storage
+	registry        *commands.Registry
+	listener        net.Listener
+	wg              sync.WaitGroup
+	shutdown        chan struct{}
+	replicationClient *replication.Client
 }
 
 // New creates a new Redis server
@@ -57,6 +59,21 @@ func (server *Server) Start() error {
 	// Accept connections in a goroutine
 	go server.acceptConnections()
 
+	// If configured as replica, connect to master
+	if server.config.IsReplica() {
+		host, port := server.config.GetReplicaInfo()
+		if host != "" && port != "" {
+			server.replicationClient = replication.NewClient(host, port)
+
+			// Connect to master in a goroutine
+			go func() {
+				if err := server.connectToMaster(); err != nil {
+					logger.Error("Failed to connect to master: %v", err)
+				}
+			}()
+		}
+	}
+
 	return nil
 }
 
@@ -66,6 +83,11 @@ func (server *Server) Stop() error {
 
 	if server.listener != nil {
 		server.listener.Close()
+	}
+
+	// Close replication client if exists
+	if server.replicationClient != nil {
+		server.replicationClient.Close()
 	}
 
 	// Wait for all connections to finish
@@ -146,4 +168,21 @@ func (server *Server) handleConnection(conn net.Conn) {
 // RegisterCommand adds a custom command implementation
 func (server *Server) RegisterCommand(cmd commands.Command) {
 	server.registry.RegisterCommand(cmd)
+}
+
+// connectToMaster establishes connection to master and performs handshake
+func (server *Server) connectToMaster() error {
+	// Connect to master
+	if err := server.replicationClient.Connect(); err != nil {
+		return err
+	}
+
+	// Perform handshake
+	if err := server.replicationClient.Handshake(); err != nil {
+		return err
+	}
+
+	// TODO: Continue with replication stream in future stages
+
+	return nil
 }
