@@ -11,18 +11,20 @@ import (
 
 // Client handles replica's connection to master
 type Client struct {
-	masterHost string
-	masterPort string
-	conn       net.Conn
-	encoder    *resp.Encoder
-	parser     *resp.Parser
+	masterHost   string
+	masterPort   string
+	replicaPort  int
+	conn         net.Conn
+	encoder      *resp.Encoder
+	parser       *resp.Parser
 }
 
 // NewClient creates a new replication client
-func NewClient(host, port string) *Client {
+func NewClient(host, port string, replicaPort int) *Client {
 	return &Client{
-		masterHost: host,
-		masterPort: port,
+		masterHost:  host,
+		masterPort:  port,
+		replicaPort: replicaPort,
 	}
 }
 
@@ -59,7 +61,12 @@ func (c *Client) Handshake() error {
 		return fmt.Errorf("failed to send PING: %w", err)
 	}
 
-	// TODO: Add more handshake steps (REPLCONF, PSYNC) in future stages
+	// Step 2: Send REPLCONF listening-port
+	if err := c.sendReplConf(); err != nil {
+		return fmt.Errorf("failed to send REPLCONF: %w", err)
+	}
+
+	// TODO: Add more handshake steps (PSYNC) in future stages
 
 	return nil
 }
@@ -90,5 +97,83 @@ func (c *Client) sendPing() error {
 	}
 
 	logger.Debug("Received PONG from master")
+	return nil
+}
+
+// sendReplConf sends REPLCONF commands
+func (c *Client) sendReplConf() error {
+	// Send REPLCONF listening-port
+	if err := c.sendReplConfListeningPort(); err != nil {
+		return err
+	}
+
+	// Send REPLCONF capa
+	if err := c.sendReplConfCapa(); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// sendReplConfListeningPort sends REPLCONF listening-port command
+func (c *Client) sendReplConfListeningPort() error {
+	logger.Debug("Sending REPLCONF listening-port %d to master", c.replicaPort)
+
+	// Create REPLCONF listening-port command
+	replConfCmd := resp.ArrayValue(
+		resp.BulkStringValue("REPLCONF"),
+		resp.BulkStringValue("listening-port"),
+		resp.BulkStringValue(fmt.Sprintf("%d", c.replicaPort)),
+	)
+
+	// Send REPLCONF
+	if err := c.encoder.Encode(replConfCmd); err != nil {
+		return fmt.Errorf("failed to encode REPLCONF listening-port: %w", err)
+	}
+
+	// Read response
+	response, err := c.parser.Parse()
+	if err != nil {
+		return fmt.Errorf("failed to read REPLCONF listening-port response: %w", err)
+	}
+
+	// Check if response is OK
+	if response.Type != resp.SimpleString || response.Str != "OK" {
+		return fmt.Errorf("unexpected REPLCONF listening-port response: %v", response)
+	}
+
+	logger.Debug("Received OK for REPLCONF listening-port from master")
+	return nil
+}
+
+// sendReplConfCapa sends REPLCONF capa command
+func (c *Client) sendReplConfCapa() error {
+	logger.Debug("Sending REPLCONF capa to master")
+
+	// Create REPLCONF capa command
+	// For now, we'll send psync2 capability
+	replConfCmd := resp.ArrayValue(
+		resp.BulkStringValue("REPLCONF"),
+		resp.BulkStringValue("capa"),
+		resp.BulkStringValue("psync2"),
+	)
+
+	// Send REPLCONF
+	if err := c.encoder.Encode(replConfCmd); err != nil {
+		return fmt.Errorf("failed to encode REPLCONF capa: %w", err)
+	}
+
+	// Read response
+	response, err := c.parser.Parse()
+	if err != nil {
+		return fmt.Errorf("failed to read REPLCONF capa response: %w", err)
+	}
+
+	// Check if response is OK
+	if response.Type != resp.SimpleString || response.Str != "OK" {
+		return fmt.Errorf("unexpected REPLCONF capa response: %v", response)
+	}
+
+	logger.Debug("Received OK for REPLCONF capa from master")
 	return nil
 }

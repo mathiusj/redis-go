@@ -59,11 +59,11 @@ func (server *Server) Start() error {
 	// Accept connections in a goroutine
 	go server.acceptConnections()
 
-	// If configured as replica, connect to master
+		// If configured as replica, connect to master
 	if server.config.IsReplica() {
 		host, port := server.config.GetReplicaInfo()
 		if host != "" && port != "" {
-			server.replicationClient = replication.NewClient(host, port)
+			server.replicationClient = replication.NewClient(host, port, server.config.Port)
 
 			// Connect to master in a goroutine
 			go func() {
