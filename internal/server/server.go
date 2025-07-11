@@ -297,18 +297,23 @@ func (server *Server) shouldPropagate(cmdName string) bool {
 
 // connectToMaster establishes connection to master and performs handshake
 func (server *Server) connectToMaster() error {
+	logger.Debug("connectToMaster started")
+
 	// Connect to master
 	if err := server.replicationClient.Connect(); err != nil {
 		return err
 	}
 
 	// Perform handshake
+	logger.Debug("Starting handshake...")
 	if err := server.replicationClient.Handshake(); err != nil {
 		return err
 	}
+	logger.Debug("Handshake completed, starting processReplicationStream...")
 
-	// Start listening for commands from master
-	go server.processReplicationStream()
+	// Start listening for commands from master immediately (no goroutine delay)
+	// This will block, so the original goroutine in Start() serves this purpose
+	server.processReplicationStream()
 
 	return nil
 }
@@ -316,6 +321,9 @@ func (server *Server) connectToMaster() error {
 // processReplicationStream continuously reads and executes commands from master
 func (server *Server) processReplicationStream() {
 	logger.Info("Started processing replication stream from master")
+
+	// Add a debug log to see if we're ready immediately
+	logger.Debug("Ready to receive commands from master")
 
 	for {
 		// Check for shutdown
@@ -345,15 +353,20 @@ func (server *Server) processReplicationStream() {
 		args := command.GetArgs()
 		logger.Debug("Received command from master: %s", cmdName)
 
-		// Special handling for REPLCONF GETACK
+		// Special handling for REPLCONF GETACK - send ACK before updating offset
 		if strings.ToUpper(cmdName) == "REPLCONF" && len(args) > 0 && strings.ToUpper(args[0]) == "GETACK" {
 			logger.Debug("Received REPLCONF GETACK, sending ACK")
-			// Send ACK with current offset
+			// Send ACK with current offset (before processing this command)
 			if err := server.replicationClient.SendReplConfAck(); err != nil {
 				logger.Error("Failed to send REPLCONF ACK: %v", err)
 			}
+			// Now update the offset for this command
+			server.replicationClient.ProcessCommand(command)
 			continue
 		}
+
+		// For all other commands, update offset first
+		server.replicationClient.ProcessCommand(command)
 
 		// Execute command through registry (this will update local storage)
 		response := server.registry.HandleCommand(command)

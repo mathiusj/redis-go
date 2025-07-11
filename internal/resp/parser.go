@@ -144,3 +144,40 @@ func (parser *Parser) parseArray() (Value, error) {
 
 	return Value{Type: Array, Array: array}, nil
 }
+
+// ParseRDBBulkString parses a bulk string for RDB data which doesn't have trailing CRLF
+func (parser *Parser) ParseRDBBulkString() (Value, error) {
+	// Read the type byte
+	typeByte, err := parser.reader.ReadByte()
+	if err != nil {
+		return Value{}, err
+	}
+
+	if Type(typeByte) != BulkString {
+		return Value{}, fmt.Errorf("expected bulk string for RDB, got %c", typeByte)
+	}
+
+	// Read the length
+	line, err := parser.readLine()
+	if err != nil {
+		return Value{}, err
+	}
+
+	length, err := strconv.Atoi(line)
+	if err != nil {
+		return Value{}, fmt.Errorf("invalid bulk string length: %s", line)
+	}
+
+	if length < 0 {
+		return Value{}, fmt.Errorf("invalid bulk string length: %d", length)
+	}
+
+	// Read exactly length bytes (no trailing CRLF for RDB)
+	data := make([]byte, length)
+	_, err = io.ReadFull(parser.reader, data)
+	if err != nil {
+		return Value{}, err
+	}
+
+	return Value{Type: BulkString, Str: string(data)}, nil
+}

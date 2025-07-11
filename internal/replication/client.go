@@ -2,7 +2,6 @@ package replication
 
 import (
 	"fmt"
-	"io"
 	"net"
 	"strconv"
 	"strings"
@@ -60,6 +59,8 @@ func (c *Client) Close() error {
 
 // Handshake performs the replication handshake with master
 func (c *Client) Handshake() error {
+	logger.Debug("Starting handshake with master")
+
 	// Step 1: Send PING
 	if err := c.sendPing(); err != nil {
 		return err
@@ -76,10 +77,12 @@ func (c *Client) Handshake() error {
 	}
 
 	// Step 4: Receive RDB file (if sent)
+	logger.Debug("About to receive RDB...")
 	if err := c.receiveRDB(); err != nil {
 		logger.Warn("Failed to receive RDB: %v", err)
 		// Don't fail - some tests don't send RDB
 	}
+	logger.Debug("Handshake complete, returning")
 
 	return nil
 }
@@ -235,121 +238,107 @@ func (c *Client) sendPsync() error {
 
 	logger.Info("Received FULLRESYNC with replid=%s offset=%d", replID, offset)
 
-	// IMPORTANT: Create a new parser after FULLRESYNC
-	// This prevents the RDB from being buffered by the old parser
-	c.parser = resp.NewParser(c.conn)
-	logger.Debug("Created new parser after FULLRESYNC")
+	// Don't create a new parser here - it might buffer the RDB data
+	// c.parser = resp.NewParser(c.conn)
+	// logger.Debug("Created new parser after FULLRESYNC")
 
 	return nil
 }
 
 // receiveRDB receives and processes the RDB file from master
 func (c *Client) receiveRDB() error {
-	logger.Debug("Attempting to receive RDB file from master")
+	logger.Debug("Receiving RDB file from master")
 
-	// The RDB is sent as a bulk string WITHOUT trailing CRLF
-	// OR in some cases (tests), no RDB is sent at all
-
-	// Try to read the first byte to determine what's coming
-	firstByte := make([]byte, 1)
-	n, err := c.conn.Read(firstByte)
+	// The RDB is sent as a bulk string WITHOUT trailing CRLF in replication
+	// Use the special parser method for RDB
+	rdbValue, err := c.parser.ParseRDBBulkString()
 	if err != nil {
-		if err == io.EOF {
-			logger.Debug("EOF when checking for RDB, assuming no RDB")
-			return nil
-		}
-		return fmt.Errorf("failed to read first byte: %w", err)
+		return fmt.Errorf("failed to parse RDB: %w", err)
 	}
 
-	if n == 0 {
-		logger.Debug("No data read, assuming no RDB")
-		return nil
-	}
-
-	// Check if it's a bulk string
-	if firstByte[0] != '$' {
-		// Not an RDB - this is the first byte of the next command
-		logger.Debug("First byte is not '$' (got %c), prepending for next command", firstByte[0])
-
-		// Create a connection wrapper that prepends this byte
-		prependConn := &prependReader{
-			prepend: firstByte,
-			reader:  c.conn,
-		}
-		// Replace parser to use the prepended connection
-		c.parser = resp.NewParser(prependConn)
-
-		return nil
-	}
-
-	// It's a bulk string - read the RDB
-	logger.Debug("Found bulk string marker, reading RDB")
-
-	// Read the length line
-	lengthStr := ""
-	for {
-		b := make([]byte, 1)
-		if _, err := c.conn.Read(b); err != nil {
-			return fmt.Errorf("failed to read RDB length: %w", err)
-		}
-		if b[0] == '\r' {
-			continue
-		}
-		if b[0] == '\n' {
-			break
-		}
-		lengthStr += string(b[0])
-	}
-
-	// Parse length
-	length, err := strconv.Atoi(lengthStr)
-	if err != nil {
-		return fmt.Errorf("invalid RDB length: %s", lengthStr)
-	}
-
-	logger.Debug("RDB length: %d bytes", length)
-
-	// Read the RDB data (no trailing CRLF)
-	rdbData := make([]byte, length)
-	totalRead := 0
-	for totalRead < length {
-		n, err := c.conn.Read(rdbData[totalRead:])
-		if err != nil {
-			return fmt.Errorf("failed to read RDB data: %w", err)
-		}
-		totalRead += n
-	}
+	// Get the RDB data
+	rdbData := []byte(rdbValue.Str)
 
 	logger.Debug("Successfully received RDB: %d bytes", len(rdbData))
+	logger.Debug("receiveRDB completed, returning")
 	// TODO: Parse and apply RDB in future stages
 
 	return nil
-}
-
-// prependReader is a helper to prepend bytes to a reader
-type prependReader struct {
-	prepend []byte
-	reader  io.Reader
-	used    bool
-}
-
-func (pr *prependReader) Read(p []byte) (n int, err error) {
-	if !pr.used && len(pr.prepend) > 0 {
-		n = copy(p, pr.prepend)
-		pr.prepend = pr.prepend[n:]
-		if len(pr.prepend) == 0 {
-			pr.used = true
-		}
-		return n, nil
-	}
-	return pr.reader.Read(p)
 }
 
 // ListenForCommands continuously reads commands from master and returns them
 // This should be called in a goroutine after successful handshake
 func (c *Client) ListenForCommands() (resp.Value, error) {
 	// Read next command from master
-	return c.parser.Parse()
+	value, err := c.parser.Parse()
+	if err != nil {
+		return resp.Value{}, err
+	}
+
+	// Don't update offset here - let the caller decide based on command type
+	return value, nil
+}
+
+// ProcessCommand updates the offset for all commands received from master
+func (c *Client) ProcessCommand(command resp.Value) {
+	// Always update offset for all commands
+	commandBytes := c.calculateCommandBytes(command)
+	c.offset += int64(commandBytes)
+
+	cmdName, _ := command.GetCommand()
+	logger.Debug("Updated replication offset to %d after %s command (%d bytes)", c.offset, cmdName, commandBytes)
+}
+
+// calculateCommandBytes calculates the size of a command in RESP format
+func (c *Client) calculateCommandBytes(value resp.Value) int {
+	size := 0
+
+	switch value.Type {
+	case resp.Array:
+		// Array: *<count>\r\n followed by elements
+		size += 1 // *
+		size += len(fmt.Sprintf("%d", len(value.Array))) // count
+		size += 2 // \r\n
+
+		// Add size of each element
+		for _, elem := range value.Array {
+			size += c.calculateCommandBytes(elem)
+		}
+
+	case resp.BulkString:
+		// Bulk string: $<length>\r\n<data>\r\n
+		size += 1 // $
+		if value.IsNull {
+			size += 2 // -1
+		} else {
+			size += len(fmt.Sprintf("%d", len(value.Str))) // length
+		}
+		size += 2 // \r\n
+		if !value.IsNull {
+			size += len(value.Str) // data
+			size += 2 // \r\n
+		}
+
+	case resp.SimpleString:
+		// Simple string: +<data>\r\n
+		size += 1 // +
+		size += len(value.Str) // data
+		size += 2 // \r\n
+
+	case resp.Error:
+		// Error: -<data>\r\n
+		size += 1 // -
+		size += len(value.Str) // data
+		size += 2 // \r\n
+
+	case resp.Integer:
+		// Integer: :<number>\r\n
+		size += 1 // :
+		size += len(fmt.Sprintf("%d", value.Integer)) // number
+		size += 2 // \r\n
+	}
+
+	return size
 }
 
 // GetOffset returns the current replication offset
