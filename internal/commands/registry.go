@@ -35,6 +35,7 @@ func NewRegistry(cfg *config.Config, store *storage.Storage) *Registry {
 	registry.RegisterCommand(NewConfigCommand())
 	registry.RegisterCommand(NewKeysCommand())
 	registry.RegisterCommand(NewInfoCommand())
+	registry.RegisterCommand(NewReplConfCommand())
 
 	return registry
 }
