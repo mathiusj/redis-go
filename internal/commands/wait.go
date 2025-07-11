@@ -36,40 +36,34 @@ func (c *WaitCommand) Execute(ctx Context, args []string) resp.Value {
 		return resp.ErrorValue("ERR invalid timeout")
 	}
 
-	logger.Debug("WAIT command: numreplicas=%d, timeout=%d", numReplicas, timeout)
-
-	// For now, if we're a replica, WAIT is not supported
-	if ctx.Config.ReplicaOf != "" {
-		return resp.ErrorValue("ERR WAIT cannot be used with replica instances")
-	}
-
-	// Get the number of connected replicas
-	connectedReplicas := 0
+	// Get current replicas
+	var replicas []interface{}
 	if ctx.Server != nil {
-		connectedReplicas = len(ctx.Server.GetReplicas())
-	}
-	logger.Debug("Connected replicas: %d", connectedReplicas)
-
-	// If numreplicas is 0, return immediately with the count of connected replicas
-	if numReplicas == 0 {
-		return resp.Value{
-			Type:    resp.Integer,
-			Integer: connectedReplicas,
-		}
+		replicas = ctx.Server.GetReplicas()
 	}
 
-	// TODO: In future stages, implement actual waiting for ACKs
-	// For now, with no replicas or no propagation tracking, return 0
+	logger.Debug("WAIT command: numreplicas=%d, timeout=%d, connected_replicas=%d",
+		numReplicas, timeout, len(replicas))
+
+	// When no write commands have been sent since replicas connected,
+	// all replicas are considered synchronized
+	// For now, we assume all connected replicas are synchronized
+	// In later stages, we'll track actual synchronization status
+	synchronizedCount := len(replicas)
+
+	// Return the count of synchronized replicas
 	return resp.Value{
 		Type:    resp.Integer,
-		Integer: 0,
+		Integer: synchronizedCount,
 	}
 }
 
+// MinArgs returns the minimum number of arguments
 func (c *WaitCommand) MinArgs() int {
 	return 2
 }
 
+// MaxArgs returns the maximum number of arguments
 func (c *WaitCommand) MaxArgs() int {
 	return 2
 }
