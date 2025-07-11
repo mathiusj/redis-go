@@ -2,14 +2,14 @@ package replication
 
 import (
 	"fmt"
+	"io"
 	"net"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/codecrafters-redis-go/internal/logger"
 	"github.com/codecrafters-redis-go/internal/resp"
-	"io"
-	"strconv"
 )
 
 // Client handles replica's connection to master
@@ -248,6 +248,10 @@ func (c *Client) receiveRDB() error {
 	// The RDB is sent as a bulk string WITHOUT trailing CRLF
 	// We need to handle this specially since it's non-standard RESP
 
+	// Set a short read deadline to avoid blocking for too long
+	c.conn.SetReadDeadline(time.Now().Add(100 * time.Millisecond))
+	defer c.conn.SetReadDeadline(time.Time{}) // Reset deadline
+
 	// Read the first byte to check if it's a bulk string
 	logger.Debug("Reading first byte to check for RDB...")
 	firstByte := make([]byte, 1)
@@ -256,6 +260,11 @@ func (c *Client) receiveRDB() error {
 		if err == io.EOF {
 			// No RDB sent
 			logger.Debug("No RDB sent (EOF)")
+			return nil
+		}
+		// Check if it's a timeout - which means no RDB data available
+		if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+			logger.Debug("No RDB data available (timeout), assuming no RDB sent")
 			return nil
 		}
 		logger.Debug("Error reading first byte: %v", err)
@@ -284,6 +293,9 @@ func (c *Client) receiveRDB() error {
 
 		return nil
 	}
+
+	// Reset read deadline for the actual RDB reading
+	c.conn.SetReadDeadline(time.Time{})
 
 	// It's a bulk string, read the length
 	logger.Debug("Reading RDB length...")
