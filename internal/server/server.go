@@ -4,8 +4,11 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
+	"time"
 
 	"github.com/codecrafters-redis-go/internal/commands"
 	"github.com/codecrafters-redis-go/internal/config"
@@ -20,6 +23,8 @@ import (
 type Replica struct {
 	conn    net.Conn
 	encoder *resp.Encoder
+	offset  int64 // Last acknowledged offset
+	mu      sync.Mutex
 }
 
 // Server represents a Redis server
@@ -34,6 +39,7 @@ type Server struct {
 	replicationClient *replication.Client
 	replicas          []*Replica
 	replicasMu        sync.RWMutex
+	masterOffset      int64 // Current master replication offset
 }
 
 // New creates a new Redis server
@@ -178,6 +184,20 @@ func (server *Server) handleConnection(conn net.Conn) {
 				// Handle the command
 		cmdName, _ := value.GetCommand()
 		logger.Debug("Handling command: %s", cmdName)
+
+				// Special handling for REPLCONF ACK from replicas
+		if isReplica && strings.ToUpper(cmdName) == "REPLCONF" {
+			args := value.GetArgs()
+			if len(args) >= 2 && strings.ToUpper(args[0]) == "ACK" {
+				// Parse the offset
+				if offset, err := strconv.ParseInt(args[1], 10, 64); err == nil {
+					server.updateReplicaOffset(conn, offset)
+				}
+				// Don't send a response for REPLCONF ACK from replicas
+				continue
+			}
+		}
+
 		response := server.registry.HandleCommand(value)
 
 		// Special handling for PSYNC command
@@ -284,12 +304,58 @@ func (server *Server) propagateCommand(command resp.Value) {
 	server.replicasMu.RLock()
 	defer server.replicasMu.RUnlock()
 
+	// Calculate the size of this command in bytes
+	commandSize := server.calculateCommandSize(command)
+
+	// Update master offset
+	atomic.AddInt64(&server.masterOffset, int64(commandSize))
+
 	for _, replica := range server.replicas {
 		if err := replica.encoder.Encode(command); err != nil {
 			logger.Error("Failed to propagate command to replica %s: %v", replica.conn.RemoteAddr(), err)
 			// TODO: Remove failed replica
 		}
 	}
+}
+
+// calculateCommandSize calculates the size of a command in RESP format
+func (server *Server) calculateCommandSize(value resp.Value) int {
+	size := 0
+
+	switch value.Type {
+	case resp.Array:
+		// Array: *<count>\r\n followed by elements
+		size += 1 // *
+		size += len(fmt.Sprintf("%d", len(value.Array))) // count
+		size += 2 // \r\n
+
+		// Add size of each element
+		for _, elem := range value.Array {
+			size += server.calculateCommandSize(elem)
+		}
+
+	case resp.BulkString:
+		// Bulk string: $<length>\r\n<data>\r\n
+		size += 1 // $
+		size += len(fmt.Sprintf("%d", len(value.Str))) // length
+		size += 2 // \r\n
+		size += len(value.Str) // data
+		size += 2 // \r\n
+
+	case resp.SimpleString:
+		// Simple string: +<data>\r\n
+		size += 1 // +
+		size += len(value.Str) // data
+		size += 2 // \r\n
+
+	case resp.Integer:
+		// Integer: :<number>\r\n
+		size += 1 // :
+		size += len(fmt.Sprintf("%d", value.Integer)) // number
+		size += 2 // \r\n
+	}
+
+	return size
 }
 
 // shouldPropagate returns true if the command should be propagated to replicas
@@ -393,6 +459,102 @@ func (server *Server) processReplicationStream() {
 			logger.Error("Error executing replicated command %s: %s", cmdName, response.Str)
 		} else {
 			logger.Debug("Successfully executed replicated command: %s", cmdName)
+		}
+	}
+}
+
+// WaitForReplicas waits for the specified number of replicas to acknowledge up to the current offset
+// Returns the number of replicas that acknowledged within the timeout
+func (server *Server) WaitForReplicas(numReplicas int, timeout time.Duration) int {
+	// Get current master offset
+	currentOffset := atomic.LoadInt64(&server.masterOffset)
+
+	// If no writes have occurred, all replicas are synchronized
+	if currentOffset == 0 {
+		server.replicasMu.RLock()
+		count := len(server.replicas)
+		server.replicasMu.RUnlock()
+		return count
+	}
+
+	// Send REPLCONF GETACK to all replicas
+	server.sendGetAckToAllReplicas()
+
+	// Wait for acknowledgments with timeout
+	start := time.Now()
+	timeoutChan := time.After(timeout)
+
+	for {
+		select {
+		case <-timeoutChan:
+			// Timeout reached, return count of synchronized replicas
+			return server.countSynchronizedReplicas(currentOffset)
+		default:
+			// Check if we have enough synchronized replicas
+			count := server.countSynchronizedReplicas(currentOffset)
+			if count >= numReplicas {
+				return count
+			}
+
+			// If timeout hasn't been reached, wait a bit and check again
+			if time.Since(start) < timeout {
+				time.Sleep(10 * time.Millisecond)
+			} else {
+				return count
+			}
+		}
+	}
+}
+
+// sendGetAckToAllReplicas sends REPLCONF GETACK * to all connected replicas
+func (server *Server) sendGetAckToAllReplicas() {
+	server.replicasMu.RLock()
+	defer server.replicasMu.RUnlock()
+
+	// Create REPLCONF GETACK command
+	cmd := resp.ArrayValue(
+		resp.BulkStringValue("REPLCONF"),
+		resp.BulkStringValue("GETACK"),
+		resp.BulkStringValue("*"),
+	)
+
+	for _, replica := range server.replicas {
+		if err := replica.encoder.Encode(cmd); err != nil {
+			logger.Error("Failed to send REPLCONF GETACK to replica %s: %v",
+				replica.conn.RemoteAddr(), err)
+		}
+	}
+}
+
+// countSynchronizedReplicas counts how many replicas have acknowledged up to the given offset
+func (server *Server) countSynchronizedReplicas(targetOffset int64) int {
+	server.replicasMu.RLock()
+	defer server.replicasMu.RUnlock()
+
+	count := 0
+	for _, replica := range server.replicas {
+		replica.mu.Lock()
+		if replica.offset >= targetOffset {
+			count++
+		}
+		replica.mu.Unlock()
+	}
+
+	return count
+}
+
+// updateReplicaOffset updates the offset for a replica (called when ACK is received)
+func (server *Server) updateReplicaOffset(conn net.Conn, offset int64) {
+	server.replicasMu.RLock()
+	defer server.replicasMu.RUnlock()
+
+	for _, replica := range server.replicas {
+		if replica.conn == conn {
+			replica.mu.Lock()
+			replica.offset = offset
+			replica.mu.Unlock()
+			logger.Debug("Updated replica %s offset to %d", conn.RemoteAddr(), offset)
+			break
 		}
 	}
 }

@@ -2,6 +2,7 @@ package commands
 
 import (
 	"strconv"
+	"time"
 
 	"github.com/codecrafters-redis-go/internal/logger"
 	"github.com/codecrafters-redis-go/internal/resp"
@@ -36,20 +37,33 @@ func (c *WaitCommand) Execute(ctx Context, args []string) resp.Value {
 		return resp.ErrorValue("ERR invalid timeout")
 	}
 
-	// Get current replicas
-	var replicas []interface{}
-	if ctx.Server != nil {
-		replicas = ctx.Server.GetReplicas()
+	// Convert timeout to duration
+	timeoutDuration := time.Duration(timeout) * time.Millisecond
+
+	logger.Debug("WAIT command: numreplicas=%d, timeout=%d ms", numReplicas, timeout)
+
+	// Check if we have access to the server
+	if ctx.Server == nil {
+		return resp.ErrorValue("ERR WAIT is not supported in this context")
 	}
 
-	logger.Debug("WAIT command: numreplicas=%d, timeout=%d, connected_replicas=%d",
-		numReplicas, timeout, len(replicas))
+	// Type assert to get the actual server with WaitForReplicas method
+	type serverWaiter interface {
+		WaitForReplicas(int, time.Duration) int
+	}
 
-	// When no write commands have been sent since replicas connected,
-	// all replicas are considered synchronized
-	// For now, we assume all connected replicas are synchronized
-	// In later stages, we'll track actual synchronization status
-	synchronizedCount := len(replicas)
+	waiter, ok := ctx.Server.(serverWaiter)
+	if !ok {
+		// Fallback to old behavior if server doesn't implement WaitForReplicas
+		replicas := ctx.Server.GetReplicas()
+		return resp.Value{
+			Type:    resp.Integer,
+			Integer: len(replicas),
+		}
+	}
+
+	// Wait for replicas to acknowledge
+	synchronizedCount := waiter.WaitForReplicas(numReplicas, timeoutDuration)
 
 	// Return the count of synchronized replicas
 	return resp.Value{
