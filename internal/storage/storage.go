@@ -4,6 +4,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/codecrafters-redis-go/internal/logger"
 	"github.com/codecrafters-redis-go/internal/utils"
 )
 
@@ -17,13 +18,79 @@ type Entry struct {
 type Storage struct {
 	mu    sync.RWMutex
 	data  map[string]*Entry
+
+	// Background cleanup
+	cleanupInterval time.Duration
+	stopCleanup     chan struct{}
+	cleanupDone     sync.WaitGroup
 }
 
 // New creates a new storage instance
 func New() *Storage {
-	return &Storage{
-		data: make(map[string]*Entry),
+	return NewWithCleanupInterval(1 * time.Minute)
+}
+
+// NewWithCleanupInterval creates a new storage instance with custom cleanup interval
+func NewWithCleanupInterval(interval time.Duration) *Storage {
+	storage := &Storage{
+		data:            make(map[string]*Entry),
+		cleanupInterval: interval,
+		stopCleanup:     make(chan struct{}),
 	}
+
+	// Start background cleanup if interval is positive
+	if interval > 0 {
+		storage.startCleanup()
+	}
+
+	return storage
+}
+
+// startCleanup starts the background cleanup goroutine
+func (storage *Storage) startCleanup() {
+	storage.cleanupDone.Add(1)
+	go func() {
+		defer storage.cleanupDone.Done()
+
+		ticker := time.NewTicker(storage.cleanupInterval)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-ticker.C:
+				count := storage.cleanupExpired()
+				if count > 0 {
+					logger.Debug("Cleaned up %d expired keys", count)
+				}
+			case <-storage.stopCleanup:
+				return
+			}
+		}
+	}()
+}
+
+// cleanupExpired removes all expired entries and returns the count
+func (storage *Storage) cleanupExpired() int {
+	storage.mu.Lock()
+	defer storage.mu.Unlock()
+
+	now := time.Now()
+	count := 0
+
+	for key, entry := range storage.data {
+		if entry.Expiration != nil && now.After(*entry.Expiration) {
+			delete(storage.data, key)
+			count++
+		}
+	}
+
+	return count
+}
+
+// Close stops the background cleanup goroutine
+func (storage *Storage) Close() {
+	close(storage.stopCleanup)
+	storage.cleanupDone.Wait()
 }
 
 // Set stores a key-value pair

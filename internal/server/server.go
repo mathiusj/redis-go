@@ -6,8 +6,8 @@ import (
 	"net"
 	"sync"
 
+	"github.com/codecrafters-redis-go/internal/commands"
 	"github.com/codecrafters-redis-go/internal/config"
-	"github.com/codecrafters-redis-go/internal/handlers"
 	"github.com/codecrafters-redis-go/internal/logger"
 	"github.com/codecrafters-redis-go/internal/rdb"
 	"github.com/codecrafters-redis-go/internal/resp"
@@ -19,7 +19,7 @@ type Server struct {
 	addr     string
 	config   *config.Config
 	storage  *storage.Storage
-	registry *handlers.Registry
+	registry *commands.Registry
 	listener net.Listener
 	wg       sync.WaitGroup
 	shutdown chan struct{}
@@ -33,7 +33,7 @@ func New(addr string, cfg *config.Config) *Server {
 		addr:     addr,
 		config:   cfg,
 		storage:  store,
-		registry: handlers.NewRegistryWithStorage(cfg, store),
+		registry: commands.NewRegistry(cfg, store),
 		shutdown: make(chan struct{}),
 	}
 }
@@ -69,6 +69,9 @@ func (server *Server) Stop() error {
 
 	// Wait for all connections to finish
 	server.wg.Wait()
+
+	// Close storage to stop background cleanup
+	server.storage.Close()
 
 	logger.Info("Server stopped gracefully")
 	return nil
@@ -139,7 +142,7 @@ func (server *Server) handleConnection(conn net.Conn) {
 	}
 }
 
-// RegisterHandler adds a custom command handler
-func (server *Server) RegisterHandler(command string, handler handlers.Handler) {
-	server.registry.Register(command, handler)
+// RegisterCommand adds a custom command implementation
+func (server *Server) RegisterCommand(cmd commands.Command) {
+	server.registry.RegisterCommand(cmd)
 }
