@@ -246,113 +246,101 @@ func (c *Client) receiveRDB() error {
 	logger.Debug("Attempting to receive RDB file from master")
 
 	// The RDB is sent as a bulk string WITHOUT trailing CRLF
-	// We need to handle this specially since it's non-standard RESP
+	// In test environments, sometimes no RDB is sent at all
 
-	// Set a short read deadline to avoid blocking for too long
-	c.conn.SetReadDeadline(time.Now().Add(100 * time.Millisecond))
-	defer c.conn.SetReadDeadline(time.Time{}) // Reset deadline
+	// Set a very short deadline to check if data is immediately available
+	c.conn.SetReadDeadline(time.Now().Add(10 * time.Millisecond))
 
-	// Read the first byte to check if it's a bulk string
-	logger.Debug("Reading first byte to check for RDB...")
-	firstByte := make([]byte, 1)
-	n, err := c.conn.Read(firstByte)
+	// Try to peek at one byte
+	peekBuf := make([]byte, 1)
+	n, err := c.conn.Read(peekBuf)
+
+	// Reset deadline immediately
+	c.conn.SetReadDeadline(time.Time{})
+
 	if err != nil {
-		if err == io.EOF {
-			// No RDB sent
-			logger.Debug("No RDB sent (EOF)")
-			return nil
-		}
-		// Check if it's a timeout - which means no RDB data available
 		if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
-			logger.Debug("No RDB data available (timeout), assuming no RDB sent")
+			// No data available - assume no RDB was sent
+			logger.Debug("No RDB data available, assuming empty RDB")
 			return nil
 		}
-		logger.Debug("Error reading first byte: %v", err)
-		return fmt.Errorf("failed to read first byte: %w", err)
+		if err == io.EOF {
+			logger.Debug("EOF when checking for RDB, assuming empty RDB")
+			return nil
+		}
+		return fmt.Errorf("error checking for RDB: %w", err)
 	}
-	if n != 1 {
-		logger.Debug("Failed to read first byte, got %d bytes", n)
-		return fmt.Errorf("failed to read first byte")
+
+	if n == 0 {
+		logger.Debug("No RDB data read, assuming empty RDB")
+		return nil
 	}
 
-	logger.Debug("First byte read: %c (0x%02x)", firstByte[0], firstByte[0])
+	// Check if it's a bulk string
+	if peekBuf[0] != '$' {
+		// Not an RDB - this is probably the next command
+		logger.Debug("First byte is not '$' (got %c), assuming no RDB and prepending byte", peekBuf[0])
 
-	// If it's not a bulk string, the next command is already here
-	if firstByte[0] != '$' {
-		// This is the first byte of the next command (probably REPLCONF GETACK)
-		// We need to "unread" it by creating a new connection wrapper
-		logger.Debug("No RDB bulk string found (first byte: %c), creating prepend reader", firstByte[0])
-
-		// Create a reader that prepends this byte
+		// Create a connection wrapper that prepends this byte
 		prependConn := &prependReader{
-			prepend: firstByte,
+			prepend: peekBuf,
 			reader:  c.conn,
 		}
-		// Create new parser with the prepended byte
+		// Replace parser to use the prepended connection
 		c.parser = resp.NewParser(prependConn)
 
 		return nil
 	}
 
-	// Reset read deadline for the actual RDB reading
-	c.conn.SetReadDeadline(time.Time{})
+	// It's a bulk string - read the RDB
+	logger.Debug("Found bulk string marker, reading RDB")
 
-	// It's a bulk string, read the length
-	logger.Debug("Reading RDB length...")
+	// Read the length line
 	lengthStr := ""
 	for {
 		b := make([]byte, 1)
-		n, err := c.conn.Read(b)
-		if err != nil {
-			logger.Debug("Error reading length: %v", err)
-			return fmt.Errorf("failed to read length: %w", err)
+		if _, err := c.conn.Read(b); err != nil {
+			return fmt.Errorf("failed to read RDB length: %w", err)
 		}
-		if n != 1 {
-			logger.Debug("Failed to read length byte")
-			return fmt.Errorf("failed to read length byte")
-		}
-
 		if b[0] == '\r' {
-			// Skip CR
 			continue
 		}
 		if b[0] == '\n' {
-			// End of length
 			break
 		}
 		lengthStr += string(b[0])
 	}
 
-	// Parse the length
+	// Parse length
 	length, err := strconv.Atoi(lengthStr)
 	if err != nil {
-		logger.Debug("Invalid RDB length: %s", lengthStr)
 		return fmt.Errorf("invalid RDB length: %s", lengthStr)
 	}
 
-	logger.Debug("RDB length: %d", length)
+	logger.Debug("RDB length: %d bytes", length)
 
-	// Read the RDB data (WITHOUT expecting trailing CRLF)
-	logger.Debug("Reading %d bytes of RDB data...", length)
+	// Read the RDB data (no trailing CRLF)
 	rdbData := make([]byte, length)
-	bytesRead := 0
-	for bytesRead < length {
-		n, err := c.conn.Read(rdbData[bytesRead:])
+	totalRead := 0
+	for totalRead < length {
+		n, err := c.conn.Read(rdbData[totalRead:])
 		if err != nil {
-			logger.Debug("Error reading RDB data at offset %d: %v", bytesRead, err)
 			return fmt.Errorf("failed to read RDB data: %w", err)
 		}
-		bytesRead += n
-		logger.Debug("Read %d bytes, total: %d/%d", n, bytesRead, length)
+		totalRead += n
 	}
 
-	logger.Debug("Received RDB file: %d bytes", len(rdbData))
-	// TODO: In future stages, parse and apply the RDB data
-
-	// Important: Do NOT read trailing CRLF because it's not sent for RDB in replication
-	logger.Debug("RDB reception complete")
+	logger.Debug("Successfully received RDB: %d bytes", len(rdbData))
+	// TODO: Parse and apply RDB in future stages
 
 	return nil
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 // prependReader is a helper to prepend bytes to a reader
