@@ -26,8 +26,9 @@ type Server struct {
 }
 
 // New creates a new Redis server
-func New(addr string, cfg *config.Config) *Server {
+func New(cfg *config.Config) *Server {
 	store := storage.New()
+	addr := fmt.Sprintf("0.0.0.0:%d", cfg.Port)
 
 	return &Server{
 		addr:     addr,

@@ -10,6 +10,7 @@ type Config struct {
 	mu         sync.RWMutex
 	Dir        string
 	DBFilename string
+	Port       int
 }
 
 // New creates a new configuration with default values
@@ -17,6 +18,7 @@ func New() *Config {
 	return &Config{
 		Dir:        ".",
 		DBFilename: "dump.rdb",
+		Port:       6379,
 	}
 }
 
@@ -24,6 +26,7 @@ func New() *Config {
 func (config *Config) ParseFlags() {
 	flag.StringVar(&config.Dir, "dir", config.Dir, "The directory where RDB files are stored")
 	flag.StringVar(&config.DBFilename, "dbfilename", config.DBFilename, "The name of the RDB file")
+	flag.IntVar(&config.Port, "port", config.Port, "The port to listen on")
 	flag.Parse()
 }
 

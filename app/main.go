@@ -19,7 +19,7 @@ func main() {
 	cfg.ParseFlags()
 
 	// Create and start the server with configuration
-	srv := server.New("0.0.0.0:6379", cfg)
+	srv := server.New(cfg)
 
 	if err := srv.Start(); err != nil {
 		fmt.Printf("Failed to start server: %v\n", err)
