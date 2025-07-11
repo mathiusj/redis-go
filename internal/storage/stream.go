@@ -1,6 +1,8 @@
 package storage
 
 import (
+	"strconv"
+	"strings"
 	"sync"
 )
 
@@ -55,6 +57,36 @@ func (s *Stream) GetEntries() []StreamEntry {
 	result := make([]StreamEntry, len(s.entries))
 	copy(result, s.entries)
 	return result
+}
+
+// CompareStreamIDs compares two stream IDs
+// Returns -1 if id1 < id2, 0 if id1 == id2, 1 if id1 > id2
+func CompareStreamIDs(id1, id2 string) int {
+	// Parse ID format: timestamp-sequence
+	parts1 := strings.Split(id1, "-")
+	parts2 := strings.Split(id2, "-")
+
+	// Compare timestamps
+	ts1, _ := strconv.ParseInt(parts1[0], 10, 64)
+	ts2, _ := strconv.ParseInt(parts2[0], 10, 64)
+
+	if ts1 < ts2 {
+		return -1
+	} else if ts1 > ts2 {
+		return 1
+	}
+
+	// Timestamps are equal, compare sequences
+	seq1, _ := strconv.ParseInt(parts1[1], 10, 64)
+	seq2, _ := strconv.ParseInt(parts2[1], 10, 64)
+
+	if seq1 < seq2 {
+		return -1
+	} else if seq1 > seq2 {
+		return 1
+	}
+
+	return 0
 }
 
 // Len returns the number of entries in the stream
