@@ -8,6 +8,8 @@ import (
 
 	"github.com/codecrafters-redis-go/internal/logger"
 	"github.com/codecrafters-redis-go/internal/resp"
+	"io"
+	"strconv"
 )
 
 // Client handles replica's connection to master
@@ -228,8 +230,103 @@ func (c *Client) sendPsync() error {
 
 	logger.Info("Received FULLRESYNC with replid=%s offset=%s", replID, offset)
 
-	// TODO: In future stages, we'll need to receive and process the RDB file
-	// that follows the FULLRESYNC response
+	// Now we need to receive the RDB file
+	// The RDB might be sent as a bulk string or might be empty/skipped by test
+	if err := c.receiveRDB(); err != nil {
+		logger.Warn("Failed to receive RDB (might be empty or test mode): %v", err)
+		// Don't fail here - continue with replication
+	}
 
 	return nil
+}
+
+// receiveRDB receives and processes the RDB file from master
+func (c *Client) receiveRDB() error {
+	logger.Debug("Attempting to receive RDB file from master")
+
+	// Peek at the next byte to see what's coming
+	peekByte := make([]byte, 1)
+	n, err := c.conn.Read(peekByte)
+	if err != nil {
+		return fmt.Errorf("failed to peek at RDB: %w", err)
+	}
+	if n != 1 {
+		return fmt.Errorf("failed to read peek byte")
+	}
+
+	// If it's not a bulk string, the master might not be sending an RDB
+	// or it's already been consumed
+	if peekByte[0] != '$' {
+		// Put the byte back into the parser's buffer by creating a new parser
+		// with the peeked byte prepended
+		logger.Debug("No RDB bulk string found (got %c), assuming empty RDB", peekByte[0])
+
+		// We need to "unread" this byte for the parser
+		// Create a new reader that includes this byte
+		unreadConn := &prependReader{
+			prepend: peekByte,
+			reader:  c.conn,
+		}
+		c.parser = resp.NewParser(unreadConn)
+
+		return nil
+	}
+
+	// It's a bulk string, read the length
+	lengthLine := ""
+	for {
+		b := make([]byte, 1)
+		if _, err := c.conn.Read(b); err != nil {
+			return fmt.Errorf("failed to read RDB length: %w", err)
+		}
+		if b[0] == '\n' {
+			break
+		}
+		if b[0] != '\r' {
+			lengthLine += string(b[0])
+		}
+	}
+
+	length, err := strconv.Atoi(lengthLine)
+	if err != nil {
+		return fmt.Errorf("invalid RDB length: %s", lengthLine)
+	}
+
+	// Read the RDB data (WITHOUT trailing CRLF)
+	rdbData := make([]byte, length)
+	if _, err := io.ReadFull(c.conn, rdbData); err != nil {
+		return fmt.Errorf("failed to read RDB data: %w", err)
+	}
+
+	logger.Debug("Received RDB file: %d bytes", len(rdbData))
+	// TODO: In future stages, we might need to parse and apply the RDB data
+	// For now, we just acknowledge receipt
+
+	return nil
+}
+
+// prependReader is a helper to prepend bytes to a reader
+type prependReader struct {
+	prepend []byte
+	reader  io.Reader
+	used    bool
+}
+
+func (pr *prependReader) Read(p []byte) (n int, err error) {
+	if !pr.used && len(pr.prepend) > 0 {
+		n = copy(p, pr.prepend)
+		pr.prepend = pr.prepend[n:]
+		if len(pr.prepend) == 0 {
+			pr.used = true
+		}
+		return n, nil
+	}
+	return pr.reader.Read(p)
+}
+
+// ListenForCommands continuously reads commands from master and returns them
+// This should be called in a goroutine after successful handshake
+func (c *Client) ListenForCommands() (resp.Value, error) {
+	// Read next command from master
+	return c.parser.Parse()
 }

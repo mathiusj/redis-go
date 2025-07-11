@@ -307,9 +307,49 @@ func (server *Server) connectToMaster() error {
 		return err
 	}
 
-	// TODO: Continue with replication stream in future stages
+	// Start listening for commands from master
+	go server.processReplicationStream()
 
 	return nil
+}
+
+// processReplicationStream continuously reads and executes commands from master
+func (server *Server) processReplicationStream() {
+	logger.Info("Started processing replication stream from master")
+
+	for {
+		// Check for shutdown
+		select {
+		case <-server.shutdown:
+			return
+		default:
+		}
+
+		// Listen for command from master
+		command, err := server.replicationClient.ListenForCommands()
+		if err != nil {
+			if err == io.EOF {
+				logger.Warn("Master connection closed")
+				return
+			}
+			logger.Error("Error reading command from master: %v", err)
+			continue
+		}
+
+		// Execute the command locally
+		cmdName, _ := command.GetCommand()
+		logger.Debug("Received command from master: %s", cmdName)
+
+		// Execute command through registry (this will update local storage)
+		response := server.registry.HandleCommand(command)
+
+		// Log any errors but don't stop replication
+		if response.Type == resp.Error {
+			logger.Error("Error executing replicated command %s: %s", cmdName, response.Str)
+		} else {
+			logger.Debug("Successfully executed replicated command: %s", cmdName)
+		}
+	}
 }
 
 // getEmptyRDB returns a minimal valid RDB file
