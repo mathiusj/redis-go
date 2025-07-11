@@ -58,21 +58,27 @@ func (c *Client) Close() error {
 	return nil
 }
 
-// Handshake performs the replication handshake with the master
+// Handshake performs the replication handshake with master
 func (c *Client) Handshake() error {
 	// Step 1: Send PING
 	if err := c.sendPing(); err != nil {
-		return fmt.Errorf("failed to send PING: %w", err)
+		return err
 	}
 
 	// Step 2: Send REPLCONF listening-port
 	if err := c.sendReplConf(); err != nil {
-		return fmt.Errorf("failed to send REPLCONF: %w", err)
+		return err
 	}
 
 	// Step 3: Send PSYNC
 	if err := c.sendPsync(); err != nil {
-		return fmt.Errorf("failed to send PSYNC: %w", err)
+		return err
+	}
+
+	// Step 4: Receive RDB file (if sent)
+	if err := c.receiveRDB(); err != nil {
+		logger.Warn("Failed to receive RDB: %v", err)
+		// Don't fail - some tests don't send RDB
 	}
 
 	return nil
@@ -211,32 +217,28 @@ func (c *Client) sendPsync() error {
 
 	// Check if response is FULLRESYNC
 	if response.Type != resp.SimpleString {
-		return fmt.Errorf("unexpected PSYNC response type: %v", response.Type)
+		return fmt.Errorf("expected simple string response, got %v", response.Type)
 	}
 
 	// Parse FULLRESYNC response
-	// Format: +FULLRESYNC <replid> <offset>
-	if len(response.Str) < 11 || response.Str[:11] != "FULLRESYNC " {
+	parts := strings.Split(response.Str, " ")
+	if len(parts) != 3 || parts[0] != "FULLRESYNC" {
 		return fmt.Errorf("unexpected PSYNC response: %s", response.Str)
 	}
 
-	// Extract replication ID and offset from response
-	parts := strings.Fields(response.Str)
-	if len(parts) != 3 {
-		return fmt.Errorf("invalid FULLRESYNC response format: %s", response.Str)
-	}
-
+	// Extract replication ID and offset
 	replID := parts[1]
-	offset := parts[2]
-
-	logger.Info("Received FULLRESYNC with replid=%s offset=%s", replID, offset)
-
-	// Now we need to receive the RDB file
-	// The RDB might be sent as a bulk string or might be empty/skipped by test
-	if err := c.receiveRDB(); err != nil {
-		logger.Warn("Failed to receive RDB (might be empty or test mode): %v", err)
-		// Don't fail here - continue with replication
+	offset, err := strconv.Atoi(parts[2])
+	if err != nil {
+		return fmt.Errorf("invalid offset in FULLRESYNC: %s", parts[2])
 	}
+
+	logger.Info("Received FULLRESYNC with replid=%s offset=%d", replID, offset)
+
+	// IMPORTANT: Create a new parser after FULLRESYNC
+	// This prevents the RDB from being buffered by the old parser
+	c.parser = resp.NewParser(c.conn)
+	logger.Debug("Created new parser after FULLRESYNC")
 
 	return nil
 }
@@ -246,44 +248,32 @@ func (c *Client) receiveRDB() error {
 	logger.Debug("Attempting to receive RDB file from master")
 
 	// The RDB is sent as a bulk string WITHOUT trailing CRLF
-	// In test environments, sometimes no RDB is sent at all
+	// OR in some cases (tests), no RDB is sent at all
 
-	// Set a very short deadline to check if data is immediately available
-	c.conn.SetReadDeadline(time.Now().Add(10 * time.Millisecond))
-
-	// Try to peek at one byte
-	peekBuf := make([]byte, 1)
-	n, err := c.conn.Read(peekBuf)
-
-	// Reset deadline immediately
-	c.conn.SetReadDeadline(time.Time{})
-
+	// Try to read the first byte to determine what's coming
+	firstByte := make([]byte, 1)
+	n, err := c.conn.Read(firstByte)
 	if err != nil {
-		if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
-			// No data available - assume no RDB was sent
-			logger.Debug("No RDB data available, assuming empty RDB")
-			return nil
-		}
 		if err == io.EOF {
-			logger.Debug("EOF when checking for RDB, assuming empty RDB")
+			logger.Debug("EOF when checking for RDB, assuming no RDB")
 			return nil
 		}
-		return fmt.Errorf("error checking for RDB: %w", err)
+		return fmt.Errorf("failed to read first byte: %w", err)
 	}
 
 	if n == 0 {
-		logger.Debug("No RDB data read, assuming empty RDB")
+		logger.Debug("No data read, assuming no RDB")
 		return nil
 	}
 
 	// Check if it's a bulk string
-	if peekBuf[0] != '$' {
-		// Not an RDB - this is probably the next command
-		logger.Debug("First byte is not '$' (got %c), assuming no RDB and prepending byte", peekBuf[0])
+	if firstByte[0] != '$' {
+		// Not an RDB - this is the first byte of the next command
+		logger.Debug("First byte is not '$' (got %c), prepending for next command", firstByte[0])
 
 		// Create a connection wrapper that prepends this byte
 		prependConn := &prependReader{
-			prepend: peekBuf,
+			prepend: firstByte,
 			reader:  c.conn,
 		}
 		// Replace parser to use the prepended connection
@@ -334,13 +324,6 @@ func (c *Client) receiveRDB() error {
 	// TODO: Parse and apply RDB in future stages
 
 	return nil
-}
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
 }
 
 // prependReader is a helper to prepend bytes to a reader
