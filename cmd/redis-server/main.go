@@ -6,6 +6,7 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/codecrafters-redis-go/internal/config"
 	"github.com/codecrafters-redis-go/internal/server"
 )
 
@@ -13,8 +14,12 @@ func main() {
 	// You can use print statements as follows for debugging, they'll be visible when running tests.
 	fmt.Println("Logs from your program will appear here!")
 
-	// Create and start the server
-	srv := server.New("0.0.0.0:6379")
+	// Create configuration and parse command-line flags
+	cfg := config.New()
+	cfg.ParseFlags()
+
+	// Create and start the server with configuration
+	srv := server.New("0.0.0.0:6379", cfg)
 
 	if err := srv.Start(); err != nil {
 		fmt.Printf("Failed to start server: %v\n", err)

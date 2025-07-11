@@ -6,6 +6,7 @@ import (
 	"net"
 	"sync"
 
+	"github.com/codecrafters-redis-go/internal/config"
 	"github.com/codecrafters-redis-go/internal/handlers"
 	"github.com/codecrafters-redis-go/internal/resp"
 )
@@ -13,6 +14,7 @@ import (
 // Server represents a Redis server
 type Server struct {
 	addr     string
+	config   *config.Config
 	registry *handlers.Registry
 	listener net.Listener
 	wg       sync.WaitGroup
@@ -20,10 +22,11 @@ type Server struct {
 }
 
 // New creates a new Redis server
-func New(addr string) *Server {
+func New(addr string, cfg *config.Config) *Server {
 	return &Server{
 		addr:     addr,
-		registry: handlers.NewRegistry(),
+		config:   cfg,
+		registry: handlers.NewRegistry(cfg),
 		shutdown: make(chan struct{}),
 	}
 }
