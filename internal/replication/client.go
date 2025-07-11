@@ -20,6 +20,7 @@ type Client struct {
 	conn         net.Conn
 	encoder      *resp.Encoder
 	parser       *resp.Parser
+	offset       int64 // Track bytes processed from master
 }
 
 // NewClient creates a new replication client
@@ -329,4 +330,28 @@ func (pr *prependReader) Read(p []byte) (n int, err error) {
 func (c *Client) ListenForCommands() (resp.Value, error) {
 	// Read next command from master
 	return c.parser.Parse()
+}
+
+// GetOffset returns the current replication offset
+func (c *Client) GetOffset() int64 {
+	return c.offset
+}
+
+// SendReplConfAck sends REPLCONF ACK with current offset to master
+func (c *Client) SendReplConfAck() error {
+	logger.Debug("Sending REPLCONF ACK %d to master", c.offset)
+
+	// Create REPLCONF ACK command
+	ackCmd := resp.ArrayValue(
+		resp.BulkStringValue("REPLCONF"),
+		resp.BulkStringValue("ACK"),
+		resp.BulkStringValue(fmt.Sprintf("%d", c.offset)),
+	)
+
+	// Send ACK
+	if err := c.encoder.Encode(ackCmd); err != nil {
+		return fmt.Errorf("failed to send REPLCONF ACK: %w", err)
+	}
+
+	return nil
 }

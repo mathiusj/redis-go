@@ -338,7 +338,18 @@ func (server *Server) processReplicationStream() {
 
 		// Execute the command locally
 		cmdName, _ := command.GetCommand()
+		args := command.GetArgs()
 		logger.Debug("Received command from master: %s", cmdName)
+
+		// Special handling for REPLCONF GETACK
+		if strings.ToUpper(cmdName) == "REPLCONF" && len(args) > 0 && strings.ToUpper(args[0]) == "GETACK" {
+			logger.Debug("Received REPLCONF GETACK, sending ACK")
+			// Send ACK with current offset
+			if err := server.replicationClient.SendReplConfAck(); err != nil {
+				logger.Error("Failed to send REPLCONF ACK: %v", err)
+			}
+			continue
+		}
 
 		// Execute command through registry (this will update local storage)
 		response := server.registry.HandleCommand(command)
