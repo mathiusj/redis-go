@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"strings"
 	"sync"
 
 	"github.com/codecrafters-redis-go/internal/commands"
@@ -154,10 +155,47 @@ func (server *Server) handleConnection(conn net.Conn) {
 			continue
 		}
 
-		// Handle the command
+				// Handle the command
+		cmdName, _ := value.GetCommand()
+		logger.Debug("Handling command: %s", cmdName)
 		response := server.registry.HandleCommand(value)
 
+		// Special handling for PSYNC command
+		if strings.ToUpper(cmdName) == "PSYNC" {
+			// Check if this is a FULLRESYNC response
+			if response.Type == resp.SimpleString && strings.HasPrefix(response.Str, "FULLRESYNC") {
+				// Send the FULLRESYNC response first
+				if err := encoder.Encode(response); err != nil {
+					logger.Error("Error sending FULLRESYNC response: %v", err)
+					return
+				}
+
+				// Send empty RDB file as bulk string
+				emptyRDB := server.getEmptyRDB()
+				logger.Debug("Sending RDB file: %d bytes", len(emptyRDB))
+
+				// Send RDB as bulk string directly to connection
+				// without the trailing CRLF (non-standard RESP for replication)
+				header := fmt.Sprintf("$%d\r\n", len(emptyRDB))
+				if _, err := conn.Write([]byte(header)); err != nil {
+					logger.Error("Error sending RDB header: %v", err)
+					return
+				}
+
+				// Send RDB data
+				if _, err := conn.Write(emptyRDB); err != nil {
+					logger.Error("Error sending RDB data: %v", err)
+					return
+				}
+
+				// Note: NOT sending trailing CRLF as expected by replication protocol
+				logger.Debug("Successfully sent RDB file without trailing CRLF")
+				continue
+			}
+		}
+
 		// Send the response
+		logger.Debug("Sending normal response for command: %s", cmdName)
 		if err := encoder.Encode(response); err != nil {
 			logger.Error("Error sending response: %v", err)
 			return
@@ -185,4 +223,26 @@ func (server *Server) connectToMaster() error {
 	// TODO: Continue with replication stream in future stages
 
 	return nil
+}
+
+// getEmptyRDB returns a minimal valid RDB file
+func (server *Server) getEmptyRDB() []byte {
+	// Minimal RDB format:
+	// - Magic string "REDIS" (5 bytes)
+	// - Version "0003" (4 bytes)
+	// - EOF marker 0xFF (1 byte)
+	// No checksum for version 3
+
+	rdb := make([]byte, 0, 10)
+
+	// Magic string
+	rdb = append(rdb, []byte("REDIS")...)
+
+	// Version (RDB version 3)
+	rdb = append(rdb, []byte("0003")...)
+
+	// EOF marker
+	rdb = append(rdb, 0xFF)
+
+	return rdb
 }
